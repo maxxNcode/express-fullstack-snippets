@@ -15,11 +15,10 @@ class MagicSnippetProvider {
             const parsed = JSON.parse(raw);
             const lines = [];
             for (const [name, data] of Object.entries(parsed)) {
-                const body = Array.isArray(data.body) ? data.body.join('\n') : data.body;
                 const prefixes = Array.isArray(data.prefix) ? data.prefix.join(', ') : data.prefix;
-                lines.push(`- ${prefixes}: ${data.description}\n${body}`);
+                lines.push(`- ${prefixes}: ${data.description}`);
             }
-            return lines.join('\n\n');
+            return lines.join('\n');
         } catch (e) {
             return '';
         }

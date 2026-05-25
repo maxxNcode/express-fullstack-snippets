@@ -13,7 +13,7 @@ class ServerManager {
                 return;
             }
 
-            const args = ['-m', modelPath, '--port', String(port), '--ctx-size', '2048', '--n-gpu-layers', '0'];
+            const args = ['-m', modelPath, '--port', String(port), '--ctx-size', '8192', '--n-gpu-layers', '0'];
 
             this.process = spawn(serverPath, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
