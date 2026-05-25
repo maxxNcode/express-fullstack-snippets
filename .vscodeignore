@@ -1,7 +1,10 @@
 .vscodeignore
+.gitignore
+.git/**
 .opencode/**
 vsix_temp/**
 node_modules/**
 *.vsix
 MY-STORE-GUIDE.md
 docs/**
+future_plans.md
