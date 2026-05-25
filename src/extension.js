@@ -1,12 +1,11 @@
 const vscode = require('vscode');
 const { ServerManager } = require('./serverManager');
 const { AiClient } = require('./aiClient');
-const { MagicSnippetProvider } = require('./magicSnippet');
-const { InlineAutocompleteProvider } = require('./inlineProvider');
+const { MagicSnippetHandler } = require('./magicSnippet');
 
 let serverManager;
 let aiClient;
-let activeProviders = [];
+let magicHandler = null;
 
 function activate(context) {
     serverManager = new ServerManager();
@@ -27,20 +26,9 @@ function activate(context) {
                 await serverManager.start(port, modelPath, serverPath);
                 aiClient.setPort(port);
 
-                const magicProvider = new MagicSnippetProvider(aiClient, context);
-                const magicDisposable = vscode.languages.registerInlineCompletionItemProvider(
-                    { language: 'javascript' }, magicProvider
-                );
-                activeProviders.push(magicDisposable);
+                vscode.commands.executeCommand('setContext', 'njsAiEnabled', true);
 
-                const enableAuto = vscode.workspace.getConfiguration('node-sqlite-ai').get('enableAutocomplete');
-                if (enableAuto) {
-                    const autoProvider = new InlineAutocompleteProvider(aiClient);
-                    const autoDisposable = vscode.languages.registerInlineCompletionItemProvider(
-                        { language: 'javascript' }, autoProvider
-                    );
-                    activeProviders.push(autoDisposable);
-                }
+                magicHandler = new MagicSnippetHandler(aiClient, context);
 
                 vscode.window.showInformationMessage('AI: Turned on and ready');
             } catch (err) {
@@ -51,9 +39,12 @@ function activate(context) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('node-sqlite-ai.disable', async () => {
+            if (magicHandler) {
+                magicHandler.dispose();
+                magicHandler = null;
+            }
             serverManager.stop();
-            activeProviders.forEach(d => d.dispose());
-            activeProviders = [];
+            vscode.commands.executeCommand('setContext', 'njsAiEnabled', false);
             vscode.window.showInformationMessage('AI: Turned off');
         })
     );
