@@ -99,7 +99,13 @@ class MagicSnippetHandler {
     async callAI(prompt, systemContext) {
         try {
             const code = await this.aiClient.complete(prompt, systemContext, this.MAX_TOKENS);
-            return code.replace(/^```(?:javascript|js)?\n?/i, '').replace(/\n?```\s*$/, '').trim();
+            return code
+                .replace(/^```(?:javascript|js)?\n?/i, '')
+                .replace(/\n?```\s*$/, '')
+                .replace(/<\|im_start\|>/g, '')
+                .replace(/<\|im_end\|>/g, '')
+                .replace(/<\|endoftext\|>/g, '')
+                .trim();
         } catch (e) {
             console.error('AI call error:', e);
             return null;

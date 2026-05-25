@@ -13,14 +13,14 @@ class AiClient {
     complete(prompt, systemContext, maxTokens = 512) {
         return new Promise((resolve, reject) => {
             const fullPrompt = systemContext
-                ? `${systemContext}\n\n### Instruction:\n${prompt}\n\n### Response:\n`
+                ? `<|im_start|>system\n${systemContext}\n<|im_end|>\n<|im_start|>user\n${prompt}\n<|im_end|>\n<|im_start|>assistant\n`
                 : prompt;
 
             const body = JSON.stringify({
                 prompt: fullPrompt,
                 n_predict: maxTokens,
                 temperature: 0.2,
-                stop: ['\n\n\n', '### ', '<|im_end|>'],
+                stop: ['<|im_end|>', '<|im_start|>', '<｜end▁of▁sentence｜>'],
                 cache_prompt: true
             });
 
