@@ -31,7 +31,6 @@ class MagicSnippetHandler {
 
     setupEnterListener(context) {
         const disposable = vscode.workspace.onDidChangeTextDocument((event) => {
-            if (event.document.languageId !== 'javascript') return;
             const prefix = vscode.workspace.getConfiguration('node-sqlite-ai').get('magicPrefix');
 
             for (const change of event.contentChanges) {
@@ -56,7 +55,7 @@ class MagicSnippetHandler {
 
         const cmdDisposable = vscode.commands.registerCommand('node-sqlite-ai.magicComplete', () => {
             const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'javascript') return;
+            if (!editor) return;
             const cursorLine = editor.selection.active.line;
             const lineText = editor.document.lineAt(cursorLine).text;
             const prefix = vscode.workspace.getConfiguration('node-sqlite-ai').get('magicPrefix');
@@ -72,7 +71,7 @@ class MagicSnippetHandler {
     setupSelectionListener(context) {
         const disposable = vscode.window.onDidChangeTextEditorSelection((event) => {
             const editor = event.textEditor;
-            if (!editor || editor.document.languageId !== 'javascript') {
+            if (!editor) {
                 vscode.commands.executeCommand('setContext', 'njsMagicLine', false);
                 return;
             }
@@ -117,8 +116,10 @@ class MagicSnippetHandler {
             return;
         }
 
-        // Default: generate new code
-        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nUse snippets when they match the request. Combine if needed. Write from scratch if nothing fits. Output ONLY valid JavaScript code. No explanations, no markdown.`;
+        // Default: generate new code for the current file type
+        const lang = document.languageId;
+        const langHint = lang === 'html' ? 'HTML' : lang === 'javascript' ? 'JavaScript' : lang.toUpperCase();
+        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nUse snippets when they match the request. Combine if needed. Write from scratch if nothing fits. Output ONLY valid ${langHint} code matching the current file. No explanations, no markdown.`;
 
         try {
             const response = await vscode.window.withProgress(
