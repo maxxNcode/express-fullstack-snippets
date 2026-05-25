@@ -13,9 +13,9 @@
   "engines": {
     "vscode": "^1.74.0"
   },
-  "categories": ["Snippets"],
+  "categories": ["Snippets", "Other"],
   "main": "./src/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [],
   "contributes": {
     "commands": [
       {
