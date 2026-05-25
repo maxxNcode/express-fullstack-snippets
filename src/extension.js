@@ -19,7 +19,7 @@ function activate(context) {
             }
 
             const port = vscode.workspace.getConfiguration('node-sqlite-ai').get('port');
-            const modelPath = vscode.Uri.joinPath(context.extensionUri, 'models', 'qwen2.5-coder-0.5b-q4_k_m.gguf').fsPath;
+            const modelPath = vscode.Uri.joinPath(context.extensionUri, 'models', 'deepseek-coder-1.3b-instruct.q4_k_m.gguf').fsPath;
             const serverPath = vscode.Uri.joinPath(context.extensionUri, 'bin', 'llama-server.exe').fsPath;
 
             try {
