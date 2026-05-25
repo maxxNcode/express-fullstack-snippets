@@ -163,10 +163,13 @@ class MagicSnippetHandler {
 
             if (!response || requestId !== this.requestCounter) return;
 
-            // Write edited content back
+            // Write edited content back to target file
+            const lines = fileContent.split('\n');
+            const targetLastLine = lines.length - 1;
+            const targetLastLineLen = lines[targetLastLine].length;
+            const targetRange = new vscode.Range(0, 0, targetLastLine, targetLastLineLen);
             const edit = new vscode.WorkspaceEdit();
-            const fullRange = new vscode.Range(0, 0, document.lineCount - 1, document.lineAt(document.lineCount - 1).text.length);
-            edit.replace(targetUri, fullRange, response);
+            edit.replace(targetUri, targetRange, response);
             const applied = await vscode.workspace.applyEdit(edit);
 
             // Remove the njs: line from original document
