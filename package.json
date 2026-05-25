@@ -2,7 +2,7 @@
   "name": "node-sqlite-snippets",
   "displayName": "Node SQLite Server Snippets",
   "description": "Quick snippets for Express, SQLite3, Node.js backends and HTML frontend boilerplates - build fullstack apps faster.",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "publisher": "maxxNcode",
   "license": "MIT",
   "icon": "icon.png",
@@ -14,7 +14,39 @@
     "vscode": "^1.74.0"
   },
   "categories": ["Snippets"],
+  "main": "./src/extension.js",
+  "activationEvents": ["onStartupFinished"],
   "contributes": {
+    "commands": [
+      {
+        "command": "node-sqlite-ai.enable",
+        "title": "AI: Turn On"
+      },
+      {
+        "command": "node-sqlite-ai.disable",
+        "title": "AI: Turn Off"
+      }
+    ],
+    "configuration": {
+      "title": "Node SQLite AI",
+      "properties": {
+        "node-sqlite-ai.port": {
+          "type": "number",
+          "default": 23333,
+          "description": "Port for the local AI server"
+        },
+        "node-sqlite-ai.magicPrefix": {
+          "type": "string",
+          "default": "njs:",
+          "description": "Text prefix to trigger AI code generation"
+        },
+        "node-sqlite-ai.enableAutocomplete": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable inline ghost text autocomplete"
+        }
+      }
+    },
     "snippets": [
       {
         "language": "javascript",
@@ -27,5 +59,3 @@
     ]
   }
 }
-
-
