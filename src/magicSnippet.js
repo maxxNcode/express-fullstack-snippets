@@ -48,11 +48,12 @@ class MagicSnippetProvider {
                 const range = new vscode.Range(position.line, 0, position.line, line.length);
                 resolve([new vscode.InlineCompletionItem(cleaned, range)]);
             } catch (e) {
+                console.error('AI magicSnippet error:', e);
                 resolve([]);
             }
         });
 
-        return [new vscode.InlineCompletionList(resultPromise)];
+        return resultPromise;
     }
 }
 
