@@ -20,7 +20,7 @@ class AiClient {
                 prompt: fullPrompt,
                 n_predict: maxTokens,
                 temperature: 0.1,
-                stop: ['<|im_end|>', '<｜end▁of▁sentence｜>'],
+                stop: ['<|im_end|>'],
                 cache_prompt: false
             });
 

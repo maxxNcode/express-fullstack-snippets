@@ -8,7 +8,7 @@ class MagicSnippetHandler {
         this.snippets = this.buildSnippetsContext(context);
         this.disposables = [];
         this.requestCounter = 0;
-        this.MAX_TOKENS = 2048;
+        this.MAX_TOKENS = 4096;
         this.setupEnterListener(context);
         this.setupSelectionListener(context);
     }
@@ -85,13 +85,13 @@ class MagicSnippetHandler {
     }
 
     async fixSelection(selectedText, instruction) {
-        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nFix the provided code based on the instruction. Output ONLY the fixed code. No explanations, no markdown.`;
+        const systemContext = `Available snippets:\n${this.snippets}\n\nFix the provided code based on the instruction. Output only the fixed code, no explanations.`;
         const prompt = `Code to fix:\n${selectedText}\n\nInstruction: ${instruction}`;
         return await this.callAI(prompt, systemContext);
     }
 
     async editFile(fileContent, instruction) {
-        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nEdit the provided file based on the instruction. Output ONLY the complete edited file content. No explanations, no markdown.`;
+        const systemContext = `Available snippets:\n${this.snippets}\n\nEdit the provided file based on the instruction. Output the complete edited file, no explanations.`;
         const prompt = `File content:\n${fileContent}\n\nInstruction: ${instruction}`;
         return await this.callAI(prompt, systemContext);
     }
@@ -124,9 +124,11 @@ class MagicSnippetHandler {
         // Default: generate new code for the current file type
         const lang = document.languageId;
         const langHint = lang === 'html' ? 'HTML' : lang === 'javascript' ? 'JavaScript' : lang.toUpperCase();
-        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\n${lang === 'html'
-            ? 'Output a single HTML file with embedded CSS and JS. All code in one ```html block, nothing else.'
-            : `Output ONLY valid ${langHint} code. One code block, no explanations, no labels.`}`;
+        const systemContext = `Available snippets:\n${this.snippets}\n\n${lang === 'html'
+            ? 'Write a single, complete HTML file with inline CSS and JS. One ```html block only.'
+            : `Write complete ${langHint} code. One code block only. No explanations.`}
+
+Output the full file, not a partial example. Never use external files or CDNs unless required.`;
 
         try {
             const response = await vscode.window.withProgress(
