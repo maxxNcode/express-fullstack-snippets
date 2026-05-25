@@ -1,0 +1,6 @@
+*.vsix
+vsix_temp/
+.opencode/
+node_modules/
+docs/
+MY-STORE-GUIDE.md

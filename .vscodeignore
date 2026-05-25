@@ -1,0 +1,7 @@
+.vscodeignore
+.opencode/**
+vsix_temp/**
+node_modules/**
+*.vsix
+MY-STORE-GUIDE.md
+docs/**

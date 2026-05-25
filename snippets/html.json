@@ -1,0 +1,559 @@
+{
+  "API Item List UI": {
+    "prefix": "njs-list",
+    "description": "HTML listing + fetch UI for items with name, description, price",
+    "body": [
+      "<h1>${1:Items}</h1>",
+      "<div id=\"${2:list}\">Loading...</div>",
+      "",
+      "<script>",
+      "  const API = '${3:http://localhost:3000/api/items}';",
+      "",
+      "  async function loadItems() {",
+      "    const res = await fetch(API);",
+      "    const items = await res.json();",
+      "    const list = document.getElementById('${2:list}');",
+      "    if (!items.length) { list.innerHTML = '<p>No items yet.</p>'; return; }",
+      "    list.innerHTML = items.map(i => `",
+      "      <div class=\"${4:item}\">",
+      "        <div>",
+      "          <b>\\${i.${5:name}}</b> <span class=\"${6:price}\">\\$\\${i.${7:price}}</span>",
+      "          <p style=\"margin:4px 0 0;color:#555;\">\\${i.${8:description} || ''}</p>",
+      "        </div>",
+      "        <button class=\"${9:delete}\" onclick=\"remove(\\${i.id})\">Delete</button>",
+      "      </div>",
+      "    `).join('');",
+      "  }",
+      "",
+      "  async function remove(id) {",
+      "    if (!confirm('Delete this item?')) return;",
+      "    await fetch(`\\${API}/\\${id}`, { method: 'DELETE' });",
+      "    loadItems();",
+      "  }",
+      "",
+      "  loadItems();",
+      "</script>"
+    ]
+  },
+
+  "API Add Form": {
+    "prefix": "njs-form",
+    "description": "HTML form to add items via POST to API",
+    "body": [
+      "<h1>Add ${1:Item}</h1>",
+      "<form id=\"${2:addForm}\" onsubmit=\"event.preventDefault(); addItem();\">",
+      "  <input id=\"${3:name}\" placeholder=\"${4:Name}\" required>",
+      "  <textarea id=\"${5:desc}\" placeholder=\"${6:Description}\" rows=\"2\"></textarea>",
+      "  <input id=\"${7:price}\" type=\"number\" step=\"0.01\" placeholder=\"${8:Price}\" required>",
+      "  <button type=\"submit\">Add</button>",
+      "</form>",
+      "",
+      "<script>",
+      "  const API = '${9:http://localhost:3000/api/items}';",
+      "",
+      "  async function addItem() {",
+      "    const ${3:name} = document.getElementById('${3:name}').value;",
+      "    const ${5:desc} = document.getElementById('${5:desc}').value;",
+      "    const ${7:price} = parseFloat(document.getElementById('${7:price}').value);",
+      "    if (!${3:name} || isNaN(${7:price})) return alert('${4:Name} and ${8:Price} required');",
+      "",
+      "    await fetch(API, {",
+      "      method: 'POST',",
+      "      headers: { 'Content-Type': 'application/json' },",
+      "      body: JSON.stringify({ ${3:name}, ${5:desc}, ${7:price} })",
+      "    });",
+      "",
+      "    document.getElementById('${2:addForm}').reset();",
+      "    if (typeof loadItems === 'function') loadItems();",
+      "  }",
+      "</script>"
+    ]
+  },
+
+  "Full Item Manager Page": {
+    "prefix": "njs-page",
+    "description": "Complete HTML page with add form and item list",
+    "body": [
+      "<!DOCTYPE html>",
+      "<html>",
+      "<head>",
+      "  <meta charset=\"UTF-8\">",
+      "  <title>${1:Item Manager}</title>",
+      "  <style>",
+      "    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }",
+      "    form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 30px; }",
+      "    input, textarea, button { padding: 10px; font-size: 1rem; }",
+      "    .item { border: 1px solid #ddd; padding: 12px; margin-bottom: 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }",
+      "    .price { color: green; font-weight: bold; }",
+      "    .delete { background: crimson; color: white; border: none; border-radius: 4px; cursor: pointer; }",
+      "  </style>",
+      "</head>",
+      "<body>",
+      "  <h1>Add ${2:Item}</h1>",
+      "  <form id=\"addForm\" onsubmit=\"event.preventDefault(); addItem();\">",
+      "    <input id=\"name\" placeholder=\"${3:Name}\" required>",
+      "    <textarea id=\"desc\" placeholder=\"${4:Description}\" rows=\"2\"></textarea>",
+      "    <input id=\"price\" type=\"number\" step=\"0.01\" placeholder=\"${5:Price}\" required>",
+      "    <button type=\"submit\">Add</button>",
+      "  </form>",
+      "",
+      "  <h1>${1:Items}</h1>",
+      "  <div id=\"list\">Loading...</div>",
+      "",
+      "  <script>",
+      "    const API = '${6:http://localhost:3000/api/items}';",
+      "",
+      "    async function loadItems() {",
+      "      const res = await fetch(API);",
+      "      const items = await res.json();",
+      "      const list = document.getElementById('list');",
+      "      if (!items.length) { list.innerHTML = '<p>No items yet.</p>'; return; }",
+      "      list.innerHTML = items.map(i => `",
+      "        <div class=\"item\">",
+      "          <div>",
+      "            <b>\\${i.${7:name}}</b> <span class=\"price\">\\$\\${i.${8:price}}</span>",
+      "            <p style=\"margin:4px 0 0;color:#555;\">\\${i.${9:description} || ''}</p>",
+      "          </div>",
+      "          <button class=\"delete\" onclick=\"remove(\\${i.id})\">Delete</button>",
+      "        </div>",
+      "      `).join('');",
+      "    }",
+      "",
+      "    async function addItem() {",
+      "      const name = document.getElementById('name').value;",
+      "      const description = document.getElementById('desc').value;",
+      "      const price = parseFloat(document.getElementById('price').value);",
+      "      if (!name || isNaN(price)) return alert('${3:Name} and ${5:Price} required');",
+      "",
+      "      await fetch(API, {",
+      "        method: 'POST',",
+      "        headers: { 'Content-Type': 'application/json' },",
+      "        body: JSON.stringify({ name, description, price })",
+      "      });",
+      "",
+      "      document.getElementById('addForm').reset();",
+      "      loadItems();",
+      "    }",
+      "",
+      "    async function remove(id) {",
+      "      if (!confirm('Delete this item?')) return;",
+      "      await fetch(`\\${API}/\\${id}`, { method: 'DELETE' });",
+      "      loadItems();",
+      "    }",
+      "",
+      "    loadItems();",
+      "  </script>",
+      "</body>",
+      "</html>"
+    ]
+  },
+
+  "Bootstrap Button Primary": {
+    "prefix": "boot-btn-primary",
+    "description": "Bootstrap primary button",
+    "body": ["<button type=\"button\" class=\"btn btn-primary\">${1:Click me}</button>"]
+  },
+  "Bootstrap Button Secondary": {
+    "prefix": "boot-btn-secondary",
+    "description": "Bootstrap secondary button",
+    "body": ["<button type=\"button\" class=\"btn btn-secondary\">${1:Click me}</button>"]
+  },
+  "Bootstrap Button Success": {
+    "prefix": "boot-btn-success",
+    "description": "Bootstrap success button",
+    "body": ["<button type=\"button\" class=\"btn btn-success\">${1:Click me}</button>"]
+  },
+  "Bootstrap Button Danger": {
+    "prefix": "boot-btn-danger",
+    "description": "Bootstrap danger button",
+    "body": ["<button type=\"button\" class=\"btn btn-danger\">${1:Click me}</button>"]
+  },
+  "Bootstrap Button Warning": {
+    "prefix": "boot-btn-warning",
+    "description": "Bootstrap warning button",
+    "body": ["<button type=\"button\" class=\"btn btn-warning\">${1:Click me}</button>"]
+  },
+  "Bootstrap Button Info": {
+    "prefix": "boot-btn-info",
+    "description": "Bootstrap info button",
+    "body": ["<button type=\"button\" class=\"btn btn-info\">${1:Click me}</button>"]
+  },
+  "Bootstrap Button Light": {
+    "prefix": "boot-btn-light",
+    "description": "Bootstrap light button",
+    "body": ["<button type=\"button\" class=\"btn btn-light\">${1:Click me}</button>"]
+  },
+  "Bootstrap Button Dark": {
+    "prefix": "boot-btn-dark",
+    "description": "Bootstrap dark button",
+    "body": ["<button type=\"button\" class=\"btn btn-dark\">${1:Click me}</button>"]
+  },
+
+  "Bootstrap Card": {
+    "prefix": "boot-card",
+    "description": "Bootstrap card component",
+    "body": [
+      "<div class=\"card\" style=\"width: ${1:18rem};\">",
+      "  <div class=\"card-body\">",
+      "    <h5 class=\"card-title\">${2:Card title}</h5>",
+      "    <p class=\"card-text\">${3:Some quick example text to build on the card title.}</p>",
+      "    <a href=\"${4:#}\" class=\"btn btn-primary\">${5:Go somewhere}</a>",
+      "  </div>",
+      "</div>"
+    ]
+  },
+
+  "Bootstrap Navbar": {
+    "prefix": "boot-nav",
+    "description": "Bootstrap responsive navbar",
+    "body": [
+      "<nav class=\"navbar navbar-expand-lg navbar-${1|light,dark|} bg-${2|primary,dark,light|}\">",
+      "  <div class=\"container\">",
+      "    <a class=\"navbar-brand\" href=\"#\">${3:Brand}</a>",
+      "    <button class=\"navbar-toggler\" type=\"button\" data-bs-toggle=\"collapse\" data-bs-target=\"#navbarNav\">",
+      "      <span class=\"navbar-toggler-icon\"></span>",
+      "    </button>",
+      "    <div class=\"collapse navbar-collapse\" id=\"navbarNav\">",
+      "      <ul class=\"navbar-nav\">",
+      "        <li class=\"nav-item\"><a class=\"nav-link active\" href=\"#\">Home</a></li>",
+      "        <li class=\"nav-item\"><a class=\"nav-link\" href=\"#\">${4:Link}</a></li>",
+      "      </ul>",
+      "    </div>",
+      "  </div>",
+      "</nav>"
+    ]
+  },
+
+  "Bootstrap Form Input": {
+    "prefix": "boot-input",
+    "description": "Bootstrap form input group",
+    "body": [
+      "<div class=\"mb-3\">",
+      "  <label for=\"${1:example}\" class=\"form-label\">${2:Label}</label>",
+      "  <input type=\"${3|text,email,password,number|}\" class=\"form-control\" id=\"${1:example}\" placeholder=\"${4:Enter value}\">",
+      "</div>"
+    ]
+  },
+
+  "Bootstrap Alert": {
+    "prefix": "boot-alert",
+    "description": "Bootstrap alert banner",
+    "body": [
+      "<div class=\"alert alert-${1|primary,secondary,success,danger,warning,info,light,dark|}\" role=\"alert\">",
+      "  ${2:A simple alert—check it out!}",
+      "</div>"
+    ]
+  },
+
+  "Bootstrap Table": {
+    "prefix": "boot-table",
+    "description": "Bootstrap styled table",
+    "body": [
+      "<table class=\"table table-${1|striped,hover,bordered|}\">",
+      "  <thead>",
+      "    <tr>",
+      "      <th>${2:#}</th>",
+      "      <th>${3:First}</th>",
+      "      <th>${4:Last}</th>",
+      "    </tr>",
+      "  </thead>",
+      "  <tbody>",
+      "    <tr>",
+      "      <td>1</td>",
+      "      <td>${5:Mark}</td>",
+      "      <td>${6:Otto}</td>",
+      "    </tr>",
+      "  </tbody>",
+      "</table>"
+    ]
+  },
+
+  "Bootstrap Modal": {
+    "prefix": "boot-modal",
+    "description": "Bootstrap modal dialog",
+    "body": [
+      "<div class=\"modal fade\" id=\"${1:exampleModal}\" tabindex=\"-1\">",
+      "  <div class=\"modal-dialog\">",
+      "    <div class=\"modal-content\">",
+      "      <div class=\"modal-header\">",
+      "        <h5 class=\"modal-title\">${2:Modal title}</h5>",
+      "        <button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button>",
+      "      </div>",
+      "      <div class=\"modal-body\">",
+      "        ${3:Modal body content goes here.}",
+      "      </div>",
+      "      <div class=\"modal-footer\">",
+      "        <button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button>",
+      "        <button type=\"button\" class=\"btn btn-primary\">${4:Save changes}</button>",
+      "      </div>",
+      "    </div>",
+      "  </div>",
+      "</div>"
+    ]
+  },
+
+  "Bootstrap Container + Grid": {
+    "prefix": "boot-grid",
+    "description": "Bootstrap container with responsive grid row/cols",
+    "body": [
+      "<div class=\"container\">",
+      "  <div class=\"row\">",
+      "    <div class=\"col-${1|12,md-6,lg-4,sm-6|}\">${2:Column}</div>",
+      "    <div class=\"col-${1|12,md-6,lg-4,sm-6|}\">${3:Column}</div>",
+      "  </div>",
+      "</div>"
+    ]
+  },
+
+  "Tailwind Button Blue": {
+    "prefix": "tail-btn-blue",
+    "description": "Tailwind blue button",
+    "body": [
+      "<button class=\"bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded\">",
+      "  ${1:Click me}",
+      "</button>"
+    ]
+  },
+  "Tailwind Button Green": {
+    "prefix": "tail-btn-green",
+    "description": "Tailwind green button",
+    "body": [
+      "<button class=\"bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded\">",
+      "  ${1:Click me}",
+      "</button>"
+    ]
+  },
+  "Tailwind Button Red": {
+    "prefix": "tail-btn-red",
+    "description": "Tailwind red button",
+    "body": [
+      "<button class=\"bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded\">",
+      "  ${1:Click me}",
+      "</button>"
+    ]
+  },
+  "Tailwind Button Gray": {
+    "prefix": "tail-btn-gray",
+    "description": "Tailwind gray button",
+    "body": [
+      "<button class=\"bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded\">",
+      "  ${1:Click me}",
+      "</button>"
+    ]
+  },
+
+  "Tailwind Card": {
+    "prefix": "tail-card",
+    "description": "Tailwind CSS card component",
+    "body": [
+      "<div class=\"max-w-sm rounded overflow-hidden shadow-lg\">",
+      "  <div class=\"px-6 py-4\">",
+      "    <div class=\"font-bold text-xl mb-2\">${1:Card Title}</div>",
+      "    <p class=\"text-gray-700 text-base\">",
+      "      ${2:Some quick example text to build on the card title.}",
+      "    </p>",
+      "  </div>",
+      "  <div class=\"px-6 pt-4 pb-2\">",
+      "    <button class=\"bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded\">${3:Action}</button>",
+      "  </div>",
+      "</div>"
+    ]
+  },
+
+  "Tailwind Navbar": {
+    "prefix": "tail-nav",
+    "description": "Tailwind CSS responsive navbar",
+    "body": [
+      "<nav class=\"bg-gray-800 p-4\">",
+      "  <div class=\"container mx-auto flex justify-between items-center\">",
+      "    <a href=\"#\" class=\"text-white text-xl font-bold\">${1:Brand}</a>",
+      "    <div class=\"space-x-4\">",
+      "      <a href=\"#\" class=\"text-gray-300 hover:text-white\">Home</a>",
+      "      <a href=\"#\" class=\"text-gray-300 hover:text-white\">${2:About}</a>",
+      "      <a href=\"#\" class=\"text-gray-300 hover:text-white\">${3:Contact}</a>",
+      "    </div>",
+      "  </div>",
+      "</nav>"
+    ]
+  },
+
+  "Tailwind Form Input": {
+    "prefix": "tail-input",
+    "description": "Tailwind CSS form input",
+    "body": [
+      "<div class=\"mb-4\">",
+      "  <label class=\"block text-gray-700 text-sm font-bold mb-2\" for=\"${1:input}\">",
+      "    ${2:Label}",
+      "  </label>",
+      "  <input class=\"shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline\"",
+      "    id=\"${1:input}\" type=\"${3|text,email,password,number|}\" placeholder=\"${4:Enter value}\">",
+      "</div>"
+    ]
+  },
+
+  "Tailwind Alert": {
+    "prefix": "tail-alert",
+    "description": "Tailwind CSS alert banner",
+    "body": [
+      "<div class=\"bg-${1|blue,green,red,yellow|}-100 border-l-4 border-${1|blue,green,red,yellow|}-500 text-${1|blue,green,red,yellow|}-700 p-4\" role=\"alert\">",
+      "  <p class=\"font-bold\">${2:Alert}</p>",
+      "  <p>${3:Something happened that you should know about.}</p>",
+      "</div>"
+    ]
+  },
+
+  "Tailwind Table": {
+    "prefix": "tail-table",
+    "description": "Tailwind CSS styled table",
+    "body": [
+      "<table class=\"min-w-full divide-y divide-gray-200\">",
+      "  <thead class=\"bg-gray-50\">",
+      "    <tr>",
+      "      <th class=\"px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider\">${2:#}</th>",
+      "      <th class=\"px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider\">${3:Name}</th>",
+      "      <th class=\"px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider\">${4:Status}</th>",
+      "    </tr>",
+      "  </thead>",
+      "  <tbody class=\"bg-white divide-y divide-gray-200\">",
+      "    <tr>",
+      "      <td class=\"px-6 py-4 whitespace-nowrap\">1</td>",
+      "      <td class=\"px-6 py-4 whitespace-nowrap\">${5:Jane Doe}</td>",
+      "      <td class=\"px-6 py-4 whitespace-nowrap\"><span class=\"px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800\">Active</span></td>",
+      "    </tr>",
+      "  </tbody>",
+      "</table>"
+    ]
+  },
+
+  "Tailwind Modal": {
+    "prefix": "tail-modal",
+    "description": "Tailwind CSS modal dialog",
+    "body": [
+      "<div class=\"fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center\">",
+      "  <div class=\"bg-white rounded-lg shadow-xl max-w-md w-full\">",
+      "    <div class=\"px-6 py-4 border-b\">",
+      "      <h3 class=\"text-lg font-bold\">${1:Modal Title}</h3>",
+      "    </div>",
+      "    <div class=\"px-6 py-4\">",
+      "      <p class=\"text-gray-700\">${2:Modal body content goes here.}</p>",
+      "    </div>",
+      "    <div class=\"px-6 py-4 border-t flex justify-end space-x-2\">",
+      "      <button class=\"px-4 py-2 bg-gray-300 rounded hover:bg-gray-400\">Close</button>",
+      "      <button class=\"px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600\">${3:Save}</button>",
+      "    </div>",
+      "  </div>",
+      "</div>"
+    ]
+  },
+
+  "Tailwind Container + Grid": {
+    "prefix": "tail-grid",
+    "description": "Tailwind CSS container with responsive grid",
+    "body": [
+      "<div class=\"container mx-auto px-4\">",
+      "  <div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4\">",
+      "    <div class=\"bg-white p-4 rounded shadow\">${1:Column 1}</div>",
+      "    <div class=\"bg-white p-4 rounded shadow\">${2:Column 2}</div>",
+      "    <div class=\"bg-white p-4 rounded shadow\">${3:Column 3}</div>",
+      "  </div>",
+      "</div>"
+    ]
+  },
+
+  "Bootstrap Import CDN": {
+    "prefix": "boot-import",
+    "description": "Bootstrap 5 CSS + JS CDN links for HTML head",
+    "body": [
+      "<!-- Bootstrap 5 CSS -->",
+      "<link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\" rel=\"stylesheet\">",
+      "",
+      "<!-- Bootstrap 5 JS Bundle -->",
+      "<script src=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js\"></script>"
+    ]
+  },
+
+  "Bootstrap Import NPM": {
+    "prefix": "boot-import-npm",
+    "description": "npm install Bootstrap dependency",
+    "body": ["npm install bootstrap@5.3.3"]
+  },
+
+  "Tailwind Import CDN": {
+    "prefix": "tail-import",
+    "description": "Tailwind CSS CDN link for HTML head",
+    "body": [
+      "<!-- Tailwind CSS CDN -->",
+      "<script src=\"https://cdn.tailwindcss.com\"></script>"
+    ]
+  },
+
+  "Tailwind Import NPM": {
+    "prefix": "tail-import-npm",
+    "description": "npm install Tailwind CSS and init config",
+    "body": [
+      "npm install -D tailwindcss postcss autoprefixer",
+      "npx tailwindcss init -p"
+    ]
+  },
+
+  "Item List HTML Only": {
+    "prefix": "njs-list-html",
+    "description": "HTML markup for item list container (use njs-list-js inside <script>)",
+    "body": [
+      "<h1>${1:Items}</h1>",
+      "<div id=\"${2:list}\">Loading...</div>"
+    ]
+  },
+
+  "Add Form HTML Only": {
+    "prefix": "njs-form-html",
+    "description": "HTML form markup for adding items (use njs-form-js inside <script>)",
+    "body": [
+      "<h1>Add ${1:Item}</h1>",
+      "<form id=\"${2:addForm}\" onsubmit=\"event.preventDefault(); addItem();\">",
+      "  <input id=\"${3:name}\" placeholder=\"${4:Name}\" required>",
+      "  <textarea id=\"${5:desc}\" placeholder=\"${6:Description}\" rows=\"2\"></textarea>",
+      "  <input id=\"${7:price}\" type=\"number\" step=\"0.01\" placeholder=\"${8:Price}\" required>",
+      "  <button type=\"submit\">Add</button>",
+      "</form>"
+    ]
+  },
+
+  "Full Page HTML Skeleton Only": {
+    "prefix": "njs-page-html",
+    "description": "Complete HTML page skeleton without JS (use njs-page-js inside <script>)",
+    "body": [
+      "<!DOCTYPE html>",
+      "<html>",
+      "<head>",
+      "  <meta charset=\"UTF-8\">",
+      "  <title>${1:Item Manager}</title>",
+      "  <style>",
+      "    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }",
+      "    form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 30px; }",
+      "    input, textarea, button { padding: 10px; font-size: 1rem; }",
+      "    .item { border: 1px solid #ddd; padding: 12px; margin-bottom: 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }",
+      "    .price { color: green; font-weight: bold; }",
+      "    .delete { background: crimson; color: white; border: none; border-radius: 4px; cursor: pointer; }",
+      "  </style>",
+      "</head>",
+      "<body>",
+      "  <h1>Add ${2:Item}</h1>",
+      "  <form id=\"addForm\" onsubmit=\"event.preventDefault(); addItem();\">",
+      "    <input id=\"name\" placeholder=\"${3:Name}\" required>",
+      "    <textarea id=\"desc\" placeholder=\"${4:Description}\" rows=\"2\"></textarea>",
+      "    <input id=\"price\" type=\"number\" step=\"0.01\" placeholder=\"${5:Price}\" required>",
+      "    <button type=\"submit\">Add</button>",
+      "  </form>",
+      "",
+      "  <h1>${1:Items}</h1>",
+      "  <div id=\"list\">Loading...</div>",
+      "",
+      "  <script>",
+      "    // Paste njs-page-js here",
+      "  </script>",
+      "</body>",
+      "</html>"
+    ]
+  }
+}

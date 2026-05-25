@@ -1,0 +1,1064 @@
+{"Express SQLite Server": {
+    "prefix": ["njs-server", "njs-sv"],
+    "description": "[DB] Full Express + Better-SQLite3 server with DB connection",
+    "body": [
+      "// Requires: express, better-sqlite3, cors | Insert near routes section",
+      "const express = require('express');",
+      "const Database = require('better-sqlite3');",
+      "const cors = require('cors');",
+      "",
+      "const app = express();",
+      "const PORT = process.env.PORT || 3000;",
+      "",
+      "app.use(cors());",
+      "app.use(express.json());",
+      "app.use(express.urlencoded({ extended: true }));",
+      "",
+      "// Connect to SQLite database (synchronous, auto WAL mode)",
+      "const db = new Database('${1:data.db}');",
+      "db.pragma('journal_mode = WAL');",
+      "console.log('Connected to SQLite database.');",
+      "",
+      "// Create table if not exists",
+      "db.exec(`",
+      "  CREATE TABLE IF NOT EXISTS ${2:users} (",
+      "    id INTEGER PRIMARY KEY AUTOINCREMENT,",
+      "    ${3:name} TEXT NOT NULL",
+      "  )",
+      "`);",
+      "console.log('Table ${2:users} is ready.');",
+      "",
+      "// Prepared statements",
+      "const getAll = db.prepare('SELECT * FROM ${2:users}');",
+      "const getOne = db.prepare('SELECT * FROM ${2:users} WHERE id = ?');",
+      "const insert = db.prepare('INSERT INTO ${2:users} (${3:name}) VALUES (?)');",
+      "const update = db.prepare('UPDATE ${2:users} SET ${3:name} = ? WHERE id = ?');",
+      "const remove = db.prepare('DELETE FROM ${2:users} WHERE id = ?');",
+      "",
+      "// Routes",
+      "app.get('/', (req, res) => {",
+      "  res.json({ message: 'Server is running' });",
+      "});",
+      "",
+      "// Get all records",
+      "app.get('/${2:users}', (req, res) => {",
+      "  try {",
+      "    const rows = getAll.all();",
+      "    res.json(rows);",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});",
+      "",
+      "// Get single record",
+      "app.get('/${2:users}/:id', (req, res) => {",
+      "  try {",
+      "    const row = getOne.get(req.params.id);",
+      "    if (!row) return res.status(404).json({ error: 'Not found' });",
+      "    res.json(row);",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});",
+      "",
+      "// Create record",
+      "app.post('/${2:users}', (req, res) => {",
+      "  try {",
+      "    const { ${3:name} } = req.body;",
+      "    const result = insert.run(${3:name});",
+      "    res.status(201).json({ id: result.lastInsertRowid });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});",
+      "",
+      "// Update record",
+      "app.put('/${2:users}/:id', (req, res) => {",
+      "  try {",
+      "    const { ${3:name} } = req.body;",
+      "    const result = update.run(${3:name}, req.params.id);",
+      "    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });",
+      "    res.json({ updated: result.changes });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});",
+      "",
+      "// Delete record",
+      "app.delete('/${2:users}/:id', (req, res) => {",
+      "  try {",
+      "    const result = remove.run(req.params.id);",
+      "    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });",
+      "    res.json({ deleted: result.changes });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});",
+      "",
+      "// Start server",
+      "app.listen(PORT, () => {",
+      "  console.log(`Server running on http://localhost:\\${PORT}`);",
+      "});",
+      "",
+      "// Graceful shutdown",
+      "process.on('SIGINT', () => {",
+      "  db.close();",
+      "  console.log('Database connection closed.');",
+      "  process.exit(0);",
+      "});"
+    ]
+  },
+
+  "Basic Express Server": {
+    "prefix": ["njs-express", "njs-ex"],
+    "description": "[Setup] Minimal Express server skeleton",
+    "body": [
+      "// Requires: express | Insert near routes section",
+      "const express = require('express');",
+      "const app = express();",
+      "const PORT = process.env.PORT || 3000;",
+      "",
+      "app.use(express.json());",
+      "",
+      "app.get('/', (req, res) => {",
+      "  res.send('${1:Hello World}');",
+      "});",
+      "",
+      "app.listen(PORT, () => {",
+      "  console.log(`Server running on port \\${PORT}`);",
+      "});"
+    ]
+  },
+
+  "SQLite DB Connection": {
+    "prefix": ["njs-db", "njs-dbc"],
+    "description": "[DB] SQLite database connection boilerplate",
+    "body": [
+      "// Requires: better-sqlite3 | Insert near routes section",
+      "const Database = require('better-sqlite3');",
+      "",
+      "const db = new Database('${1:data.db}');",
+      "db.pragma('journal_mode = WAL');",
+      "console.log('Connected to SQLite.');",
+      "",
+      "// Create table",
+      "db.exec(`",
+      "  CREATE TABLE IF NOT EXISTS ${2:items} (",
+      "    id INTEGER PRIMARY KEY AUTOINCREMENT,",
+      "    ${3:title} TEXT NOT NULL,",
+      "    created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+      "  )",
+      "`);",
+      "",
+      "module.exports = db;"
+    ]
+  },
+
+  "GET Route": {
+    "prefix": ["njs-get", "njs-g"],
+    "description": "[CRUD] Express GET route with SQLite query",
+    "body": [
+      "// Requires: better-sqlite3 | Insert near routes section",
+      "app.get('${1:/api/items}', (req, res) => {",
+      "  try {",
+      "    const rows = db.prepare('SELECT * FROM ${2:items}').all();",
+      "    res.json(rows);",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});"
+    ]
+  },
+
+  "POST Route": {
+    "prefix": ["njs-post", "njs-p"],
+    "description": "[CRUD] Express POST route with SQLite insert",
+    "body": [
+      "// Requires: better-sqlite3 | Insert near routes section",
+      "app.post('${1:/api/items}', (req, res) => {",
+      "  try {",
+      "    const { ${2:name} } = req.body;",
+      "    const result = db.prepare('INSERT INTO ${3:items} (${2:name}) VALUES (?)').run(${2:name});",
+      "    res.status(201).json({ id: result.lastInsertRowid });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});"
+    ]
+  },
+
+  "PUT Route": {
+    "prefix": ["njs-put", "njs-u"],
+    "description": "[CRUD] Express PUT route with SQLite update",
+    "body": [
+      "// Requires: better-sqlite3 | Insert near routes section",
+      "app.put('${1:/api/items}/:id', (req, res) => {",
+      "  try {",
+      "    const { ${2:name} } = req.body;",
+      "    const result = db.prepare('UPDATE ${3:items} SET ${2:name} = ? WHERE id = ?').run(${2:name}, req.params.id);",
+      "    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });",
+      "    res.json({ updated: result.changes });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});"
+    ]
+  },
+
+  "DELETE Route": {
+    "prefix": ["njs-del", "njs-d"],
+    "description": "[CRUD] Express DELETE route with SQLite delete",
+    "body": [
+      "// Requires: better-sqlite3 | Insert near routes section",
+      "app.delete('${1:/api/items}/:id', (req, res) => {",
+      "  try {",
+      "    const result = db.prepare('DELETE FROM ${2:items} WHERE id = ?').run(req.params.id);",
+      "    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });",
+      "    res.json({ deleted: result.changes });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});"
+    ]
+  },
+
+  "CORS Setup": {
+    "prefix": ["njs-cors", "njs-cor"],
+    "description": "[Security] CORS middleware configuration block",
+    "body": [
+      "// Requires: cors | Insert near routes section",
+      "const cors = require('cors');",
+      "",
+      "app.use(cors({",
+      "  origin: '${1:*}',",
+      "  methods: ['GET', 'POST', 'PUT', 'DELETE'],",
+      "  allowedHeaders: ['Content-Type', 'Authorization']",
+      "}));"
+    ]
+  },
+
+    "Package.json deps": {
+    "prefix": ["njs-pkg", "njs-pk"],
+    "description": "[Utils] Required dependencies for Express + SQLite server with auth",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "{",
+      "  \"dependencies\": {",
+      "    \"express\": \"^4.21.2\",",
+      "    \"better-sqlite3\": \"^11.8.1\",",
+      "    \"cors\": \"^2.8.5\",",
+      "    \"bcrypt\": \"^5.1.1\",",
+      "    \"jsonwebtoken\": \"^9.0.2\",",
+      "    \"dotenv\": \"^16.4.5\",",
+      "    \"nodemailer\": \"^6.9.14\"",
+      "  }",
+      "}"
+    ]
+  },
+
+  "Users Table Schema": {
+    "prefix": ["njs-users-table", "njs-ut"],
+    "description": "[DB] CREATE users table with email, password_hash, role, and reset fields",
+    "body": [
+      "// Requires: better-sqlite3 | Insert near routes section",
+      "db.exec(`",
+      "  CREATE TABLE IF NOT EXISTS ${1:users} (",
+      "    id INTEGER PRIMARY KEY AUTOINCREMENT,",
+      "    email TEXT NOT NULL UNIQUE,",
+      "    password_hash TEXT NOT NULL,",
+      "    role TEXT NOT NULL DEFAULT '${2:user}',",
+      "    reset_token TEXT,",
+      "    reset_expires INTEGER",
+      "  )",
+      "`);",
+      "console.log('Table ${1:users} is ready.');"
+    ]
+  },
+
+  "Express Router": {
+    "prefix": ["njs-router", "njs-rt"],
+    "description": "[CRUD] Express Router with CRUD routes boilerplate",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const express = require('express');",
+      "const router = express.Router();",
+      "",
+      "// GET all",
+      "router.get('/', async (req, res) => {",
+      "  ${1:// fetch logic}",
+      "  res.json({ message: 'GET all' });",
+      "});",
+      "",
+      "// GET one",
+      "router.get('/:id', async (req, res) => {",
+      "  const { id } = req.params;",
+      "  ${2:// fetch by id}",
+      "  res.json({ id });",
+      "});",
+      "",
+      "// POST create",
+      "router.post('/', async (req, res) => {",
+      "  const body = req.body;",
+      "  ${3:// create logic}",
+      "  res.status(201).json(body);",
+      "});",
+      "",
+      "// PUT update",
+      "router.put('/:id', async (req, res) => {",
+      "  const { id } = req.params;",
+      "  const body = req.body;",
+      "  ${4:// update logic}",
+      "  res.json({ id, ...body });",
+      "});",
+      "",
+      "// DELETE",
+      "router.delete('/:id', async (req, res) => {",
+      "  const { id } = req.params;",
+      "  ${5:// delete logic}",
+      "  res.json({ deleted: id });",
+      "});",
+      "",
+      "module.exports = router;"
+    ]
+  },
+
+  "Middleware Function": {
+    "prefix": ["njs-mw", "njs-mw"],
+    "description": "[Utils] Custom Express middleware boilerplate",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const ${1:myMiddleware} = (req, res, next) => {",
+      "  ${2:// check something}",
+      "  if (!req.headers['${3:x-auth}']) {",
+      "    return res.status(401).json({ error: 'Unauthorized' });",
+      "  }",
+      "  next();",
+      "};",
+      "",
+      "module.exports = ${1:myMiddleware};"
+    ]
+  },
+
+  "Error Handler Middleware": {
+    "prefix": ["njs-err", "njs-er"],
+    "description": "[Utils] Centralized Express error handler",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "app.use((err, req, res, next) => {",
+      "  console.error(err.stack);",
+      "  res.status(err.status || 500).json({",
+      "    error: err.message || 'Internal Server Error'",
+      "  });",
+      "});"
+    ]
+  },
+
+  "Async Route Wrapper": {
+    "prefix": ["njs-async", "njs-as"],
+    "description": "[Utils] Catch async errors in Express routes without try/catch everywhere",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const asyncHandler = (fn) => (req, res, next) => {",
+      "  Promise.resolve(fn(req, res, next)).catch(next);",
+      "};"
+    ]
+  },
+
+  "dotenv Config": {
+    "prefix": ["njs-env", "njs-envcfg"],
+    "description": "[Utils] Load environment variables with dotenv",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "require('dotenv').config();",
+      "",
+      "const PORT = process.env.PORT || 3000;",
+      "const DB_PATH = process.env.DB_PATH || '${1:./data.db}';",
+      "const JWT_SECRET = process.env.JWT_SECRET || '${2:secret}';"
+    ]
+  },
+
+  "JWT Sign Token": {
+    "prefix": ["njs-jwt", "njs-jt"],
+    "description": "[Auth] Generate a JWT token with jsonwebtoken",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+      "const jwt = require('jsonwebtoken');",
+      "",
+      "const token = jwt.sign(",
+      "  { ${1:userId}: ${2:user.id}, ${3:role}: ${4:user.role} },",
+      "  process.env.JWT_SECRET || '${5:secret}',",
+      "  { expiresIn: '${6:1h}' }",
+      ");"
+    ]
+  },
+
+  "JWT Verify Middleware": {
+    "prefix": ["njs-auth", "njs-aw"],
+    "description": "[Auth] Express middleware to verify JWT token with optional role check",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+      "// Usage: authMiddleware() for token only, authMiddleware('admin') for role check",
+      "const jwt = require('jsonwebtoken');",
+      "",
+      "const authMiddleware = (requiredRole = null) => {",
+      "  return (req, res, next) => {",
+      "    const authHeader = req.headers.authorization;",
+      "    if (!authHeader?.startsWith('Bearer ')) {",
+      "      return res.status(401).json({ error: 'Missing token' });",
+      "    }",
+      "    const token = authHeader.split(' ')[1];",
+      "    try {",
+      "      const decoded = jwt.verify(token, process.env.JWT_SECRET || '${1:secret}');",
+      "      req.user = decoded;",
+      "",
+      "      if (requiredRole && decoded.role !== requiredRole) {",
+      "        return res.status(403).json({ error: 'Forbidden: insufficient role' });",
+      "      }",
+      "",
+      "      next();",
+      "    } catch (err) {",
+      "      return res.status(403).json({ error: 'Invalid token' });",
+      "    }",
+      "  };",
+      "};",
+      "",
+      "module.exports = authMiddleware;"
+    ]
+  },
+
+  "Register Route": {
+    "prefix": ["njs-reg", "njs-rg"],
+    "description": "[Auth] POST /auth/register - create user with bcrypt-hashed password",
+    "body": [
+      "// Requires: bcrypt | Insert near routes section",
+      "app.post('/${1:auth/register}', async (req, res) => {",
+      "  const { email, password } = req.body;",
+      "  try {",
+      "    const existing = db.prepare('SELECT * FROM ${2:users} WHERE email = ?').get(email);",
+      "    if (existing) return res.status(400).json({ error: 'User exists' });",
+      "",
+      "    const bcrypt = require('bcrypt');",
+      "    const hash = await bcrypt.hash(password, ${3:10});",
+      "",
+      "    const result = db.prepare(",
+      "      `INSERT INTO ${2:users} (email, password_hash, role) VALUES (?, ?, ?)`",
+      "    ).run(email, hash, '${4:user}');",
+      "",
+      "    res.status(201).json({ id: result.lastInsertRowid, email, role: '${4:user}' });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});"
+    ]
+  },
+
+  "Login Route": {
+    "prefix": ["njs-log", "njs-lg"],
+    "description": "[Auth] POST /auth/login - verify credentials and return JWT",
+    "body": [
+      "// Requires: bcrypt, jsonwebtoken, dotenv | Insert near routes section",
+      "app.post('/${1:auth/login}', async (req, res) => {",
+      "  const { email, password } = req.body;",
+      "  try {",
+      "    const row = db.prepare('SELECT * FROM ${2:users} WHERE email = ?').get(email);",
+      "    if (!row) return res.status(401).json({ error: 'Invalid credentials' });",
+      "",
+      "    const bcrypt = require('bcrypt');",
+      "    const match = await bcrypt.compare(password, row.password_hash);",
+      "    if (!match) return res.status(401).json({ error: 'Invalid credentials' });",
+      "",
+      "    const jwt = require('jsonwebtoken');",
+      "    const token = jwt.sign(",
+      "      { userId: row.id, role: row.role },",
+      "      process.env.JWT_SECRET || '${3:secret}',",
+      "      { expiresIn: '${4:1h}' }",
+      "    );",
+      "",
+      "    res.json({ token, user: { id: row.id, email: row.email, role: row.role } });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});"
+    ]
+  },
+
+  "Forgot Password Route": {
+    "prefix": ["njs-forgot", "njs-fp"],
+    "description": "[Auth] POST /auth/forgot-password - generate reset token and save to DB",
+    "body": [
+      "// Requires: nodemailer, dotenv | Insert near routes section",
+      "app.post('/${1:auth/forgot-password}', async (req, res) => {",
+      "  const { email } = req.body;",
+      "  try {",
+      "    const row = db.prepare('SELECT * FROM ${2:users} WHERE email = ?').get(email);",
+      "    if (row) {",
+      "      const crypto = require('crypto');",
+      "      const token = crypto.randomBytes(32).toString('hex');",
+      "      const expires = Date.now() + 3600000;",
+      "",
+      "      db.prepare(",
+      "        'UPDATE ${2:users} SET reset_token = ?, reset_expires = ? WHERE id = ?'",
+      "      ).run(token, expires, row.id);",
+      "",
+      "      // Use njs-mail to send the reset link via email",
+      "      console.log('Reset token for', email, ':', token);",
+      "    }",
+      "    res.json({ message: 'If that email exists, a reset link was sent.' });",
+      "  } catch (err) {",
+      "    res.status(500).json({ error: err.message });",
+      "  }",
+      "});"
+    ]
+  },
+
+  "bcrypt Hash Password": {
+    "prefix": ["njs-hash", "njs-hs"],
+    "description": "[Auth] Hash and compare passwords with bcrypt",
+    "body": [
+      "// Requires: bcrypt | Insert near routes section",
+      "const bcrypt = require('bcrypt');",
+      "const SALT_ROUNDS = ${1:10};",
+      "",
+      "// Hash password",
+      "const hashPassword = async (plain) => {",
+      "  return await bcrypt.hash(plain, SALT_ROUNDS);",
+      "};",
+      "",
+      "// Compare password",
+      "const comparePassword = async (plain, hash) => {",
+      "  return await bcrypt.compare(plain, hash);",
+      "};"
+    ]
+  },
+
+  "Express Validator": {
+    "prefix": ["njs-val", "njs-vl"],
+    "description": "[Utils] Request validation boilerplate with express-validator",
+    "body": [
+      "// Requires: express-validator | Insert near routes section",
+      "const { body, validationResult } = require('express-validator');",
+      "",
+      "const validate${1:User} = [",
+      "  body('${2:email}').isEmail().withMessage('Invalid email'),",
+      "  body('${3:password}').isLength({ min: ${4:6} }).withMessage('Password too short'),",
+      "  (req, res, next) => {",
+      "    const errors = validationResult(req);",
+      "    if (!errors.isEmpty()) {",
+      "      return res.status(400).json({ errors: errors.array() });",
+      "    }",
+      "    next();",
+      "  }",
+      "];"
+    ]
+  },
+
+  "fs Read File": {
+    "prefix": ["njs-read", "njs-rd"],
+    "description": "[Utils] Read file with Node.js fs promises",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const fs = require('fs').promises;",
+      "",
+      "const readFile = async (filePath) => {",
+      "  try {",
+      "    const data = await fs.readFile(filePath, 'utf-8');",
+      "    return data;",
+      "  } catch (err) {",
+      "    console.error('Read error:', err.message);",
+      "    throw err;",
+      "  }",
+      "};"
+    ]
+  },
+
+  "fs Write File": {
+    "prefix": ["njs-write", "njs-wr"],
+    "description": "[Utils] Write file with Node.js fs promises",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const fs = require('fs').promises;",
+      "",
+      "const writeFile = async (filePath, data) => {",
+      "  try {",
+      "    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');",
+      "    console.log('File written successfully');",
+      "  } catch (err) {",
+      "    console.error('Write error:', err.message);",
+      "    throw err;",
+      "  }",
+      "};"
+    ]
+  },
+
+  "Path Join": {
+    "prefix": ["njs-path", "njs-ph"],
+    "description": "[Utils] Cross-platform path joining with Node.js path module",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const path = require('path');",
+      "",
+      "const filePath = path.join(__dirname, '${1:data}', '${2:file.json}');",
+      "const ext = path.extname(filePath);",
+      "const base = path.basename(filePath, ext);"
+    ]
+  },
+
+  "Pagination Helper": {
+    "prefix": ["njs-page", "njs-pg"],
+    "description": "[Utils] SQL pagination LIMIT/OFFSET helper function",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const paginate = (req) => {",
+      "  const page = Math.max(1, parseInt(req.query.page) || 1);",
+      "  const limit = Math.min(${1:100}, parseInt(req.query.limit) || ${2:20});",
+      "  const offset = (page - 1) * limit;",
+      "  return { page, limit, offset };",
+      "};"
+    ]
+  },
+
+  "Socket.io Server": {
+    "prefix": ["njs-socket", "njs-sk"],
+    "description": "[Realtime] Basic Socket.io setup with Express",
+    "body": [
+      "// Requires: socket.io, express | Insert near routes section",
+      "const express = require('express');",
+      "const { createServer } = require('http');",
+      "const { Server } = require('socket.io');",
+      "",
+      "const app = express();",
+      "const httpServer = createServer(app);",
+      "const io = new Server(httpServer, { cors: { origin: '*' } });",
+      "",
+      "io.on('connection', (socket) => {",
+      "  console.log('Client connected:', socket.id);",
+      "",
+      "  socket.on('${1:message}', (data) => {",
+      "    console.log('Received:', data);",
+      "    io.emit('${1:message}', data);",
+      "  });",
+      "",
+      "  socket.on('disconnect', () => {",
+      "    console.log('Client disconnected:', socket.id);",
+      "  });",
+      "});",
+      "",
+      "httpServer.listen(${2:3000}, () => {",
+      "  console.log('Socket server running');",
+      "});"
+    ]
+  },
+
+  "Multer File Upload": {
+    "prefix": ["njs-upload", "njs-up"],
+    "description": "[Upload] File upload middleware with Multer",
+    "body": [
+      "// Requires: multer | Insert near routes section",
+      "const multer = require('multer');",
+      "const path = require('path');",
+      "",
+      "const storage = multer.diskStorage({",
+      "  destination: (req, file, cb) => cb(null, '${1:uploads/}'),",
+      "  filename: (req, file, cb) => {",
+      "    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);",
+      "    cb(null, unique + path.extname(file.originalname));",
+      "  }",
+      "});",
+      "",
+      "const upload = multer({ storage, limits: { fileSize: ${2:5 * 1024 * 1024} } });",
+      "",
+      "app.post('/upload', upload.single('${3:file}'), (req, res) => {",
+      "  res.json({ file: req.file });",
+      "});"
+    ]
+  },
+
+  "Nodemailer Send Email": {
+    "prefix": ["njs-mail", "njs-em"],
+    "description": "[Email] Send email with Nodemailer",
+    "body": [
+      "// Requires: nodemailer, dotenv | Insert near routes section",
+      "const nodemailer = require('nodemailer');",
+      "",
+      "const transporter = nodemailer.createTransport({",
+      "  host: process.env.SMTP_HOST || '${1:smtp.gmail.com}',",
+      "  port: process.env.SMTP_PORT || ${2:587},",
+      "  secure: false,",
+      "  auth: {",
+      "    user: process.env.SMTP_USER,",
+      "    pass: process.env.SMTP_PASS",
+      "  }",
+      "});",
+      "",
+      "const sendEmail = async (to, subject, html) => {",
+      "  await transporter.sendMail({ from: process.env.SMTP_USER, to, subject, html });",
+      "};"
+    ]
+  },
+
+  "API Response Helper": {
+    "prefix": ["njs-res", "njs-rsp"],
+    "description": "[Utils] Standardized API response wrapper",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const success = (res, data, message = 'Success') => {",
+      "  res.json({ success: true, message, data });",
+      "};",
+      "",
+      "const error = (res, message = 'Error', status = 500) => {",
+      "  res.status(status).json({ success: false, message });",
+      "};",
+      "",
+      "module.exports = { success, error };"
+    ]
+  },
+
+  "SQLite Transaction": {
+    "prefix": ["njs-tx", "njs-trn"],
+    "description": "[DB] SQLite database transaction wrapper",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const runTransaction = (db, operations) => {",
+      "  const transaction = db.transaction(() => {",
+      "    operations(db);",
+      "  });",
+      "  try {",
+      "    transaction();",
+      "    console.log('Transaction committed');",
+      "  } catch (err) {",
+      "    console.error('Transaction failed:', err);",
+      "    throw err;",
+      "  }",
+      "};"
+    ]
+  },
+
+  "Morgan HTTP Logger": {
+    "prefix": ["njs-logger", "njs-lg"],
+    "description": "[Log] Morgan request logging middleware",
+    "body": [
+      "// Requires: morgan | Insert near routes section",
+      "const morgan = require('morgan');",
+      "",
+      "// Log all requests to console",
+      "app.use(morgan('${1|dev,combined,common,short,tiny|}'));"
+    ]
+  },
+
+  "Helmet Security Headers": {
+    "prefix": ["njs-helmet", "njs-hm"],
+    "description": "[Security] Helmet security middleware",
+    "body": [
+      "// Requires: helmet | Insert near routes section",
+      "const helmet = require('helmet');",
+      "",
+      "app.use(helmet({",
+      "  contentSecurityPolicy: false",
+      "}));"
+    ]
+  },
+
+  "Rate Limiter": {
+    "prefix": ["njs-rate", "njs-rl"],
+    "description": "[Security] Express rate limiter middleware",
+    "body": [
+      "// Requires: express-rate-limit | Insert near routes section",
+      "const rateLimit = require('express-rate-limit');",
+      "",
+      "const limiter = rateLimit({",
+      "  windowMs: ${1:15 * 60 * 1000}, // 15 minutes",
+      "  max: ${2:100}, // limit each IP to 100 requests per windowMs",
+      "  message: 'Too many requests from this IP, please try again later.'",
+      "});",
+      "",
+      "app.use('/api/', limiter);"
+    ]
+  },
+
+  "Cookie Parser": {
+    "prefix": ["njs-cookie", "njs-ck"],
+    "description": "[Utils] Cookie parser middleware",
+    "body": [
+      "// Requires: cookie-parser | Insert near routes section",
+      "const cookieParser = require('cookie-parser');",
+      "",
+      "app.use(cookieParser());"
+    ]
+  },
+
+    "Fetch API Wrapper": {
+    "prefix": ["njs-fetch", "njs-fc"],
+    "description": "[Frontend] Frontend fetch wrapper with error handling",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const apiFetch = async (url, options = {}) => {",
+      "  try {",
+      "    const res = await fetch(url, {",
+      "      headers: { 'Content-Type': 'application/json', ...options.headers },",
+      "      ...options",
+      "    });",
+      "    if (!res.ok) throw new Error(`HTTP \\${res.status}`);",
+      "    return await res.json();",
+      "  } catch (err) {",
+      "    console.error('API Error:', err);",
+      "    throw err;",
+      "  }",
+      "};"
+    ]
+  },
+
+    "API Client Class": {
+    "prefix": ["njs-api", "njs-apc"],
+    "description": "[Frontend] Reusable API client class/module",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "class ApiClient {",
+      "  constructor(baseURL = '${1:http://localhost:3000}') {",
+      "    this.baseURL = baseURL;",
+      "  }",
+      "",
+      "  async request(path, options = {}) {",
+      "    const res = await fetch(this.baseURL + path, {",
+      "      headers: { 'Content-Type': 'application/json', ...options.headers },",
+      "      ...options",
+      "    });",
+      "    if (!res.ok) throw new Error(`HTTP \\${res.status}: \\${res.statusText}`);",
+      "    return res.status === 204 ? null : await res.json();",
+      "  }",
+      "",
+      "  get(path) { return this.request(path); }",
+      "  post(path, body) { return this.request(path, { method: 'POST', body: JSON.stringify(body) }); }",
+      "  put(path, body) { return this.request(path, { method: 'PUT', body: JSON.stringify(body) }); }",
+      "  del(path) { return this.request(path, { method: 'DELETE' }); }",
+      "}",
+      "",
+      "const api = new ApiClient();",
+      "module.exports = api;"
+    ]
+  },
+
+  "Import Express": {
+    "prefix": ["njs-import-express", "njs-ie"],
+    "description": "[Setup] Import Express module",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const express = require('express');"
+    ]
+  },
+
+  "Express Static Server Setup": {
+    "prefix": ["njs-setup", "njs-st"],
+    "description": "[Setup] Express server with static files and Better-SQLite3 database setup",
+    "body": [
+      "// Requires: express, better-sqlite3 | Insert near routes section",
+      "const express = require('express');",
+      "const path = require('path');",
+      "const Database = require('better-sqlite3');",
+      "",
+      "const app = express();",
+      "const PORT = process.env.PORT || 3000;",
+      "",
+      "// Connect to SQLite database (synchronous, auto WAL mode)",
+      "const db = new Database('${1:data.db}');",
+      "db.pragma('journal_mode = WAL');",
+      "console.log('Connected to SQLite database.');",
+      "",
+      "// Create table if not exists",
+      "db.exec(`",
+      "  CREATE TABLE IF NOT EXISTS ${2:users} (",
+      "    id INTEGER PRIMARY KEY AUTOINCREMENT,",
+      "    ${3:name} TEXT NOT NULL",
+      "  )",
+      "`);",
+      "console.log('Table ${2:users} is ready.');",
+      "",
+      "// Middleware",
+      "app.use(express.json());",
+      "app.use(express.urlencoded({ extended: true }));",
+      "",
+      "// Serve static files from the public folder",
+      "app.use(express.static(path.join(__dirname, 'public')));",
+      "",
+      "// Root API check",
+      "app.get('/', (req, res) => {",
+      "  res.json({ message: 'Server is running' });",
+      "});",
+      "",
+      "app.listen(PORT, () => {",
+      "  console.log(`Server running on http://localhost:\\${PORT}`);",
+      "});",
+      "",
+      "// Graceful shutdown",
+      "process.on('SIGINT', () => {",
+      "  db.close();",
+      "  console.log('Database connection closed.');",
+      "  process.exit(0);",
+      "});"
+    ]
+  },
+
+  "Fetch Item List JS": {
+    "prefix": ["njs-list-js", "njs-ls"],
+    "description": "[Frontend] JavaScript to fetch and render items from API (use inside <script>)",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const API = '${1:http://localhost:3000/api/items}';",
+      "",
+      "async function loadItems() {",
+      "  const res = await fetch(API);",
+      "  const items = await res.json();",
+      "  const list = document.getElementById('${2:list}');",
+      "  if (!items.length) { list.innerHTML = '<p>No items yet.</p>'; return; }",
+      "  list.innerHTML = items.map(i => `",
+      "    <div class=\"${3:item}\">",
+      "      <div>",
+      "        <b>\\${i.${4:name}}</b> <span class=\"${5:price}\">\\$\\${i.${6:price}}</span>",
+      "        <p style=\"margin:4px 0 0;color:#555;\">\\${i.${7:description} || ''}</p>",
+      "      </div>",
+      "      <button class=\"${8:delete}\" onclick=\"remove(\\${i.id})\">Delete</button>",
+      "    </div>",
+      "  `).join('');",
+      "}",
+      "",
+      "async function remove(id) {",
+      "  if (!confirm('Delete this item?')) return;",
+      "  await fetch(`\\${API}/\\${id}`, { method: 'DELETE' });",
+      "  loadItems();",
+      "}",
+      "",
+      "loadItems();"
+    ]
+  },
+
+  "Add Item Form JS": {
+    "prefix": ["njs-form-js", "njs-fj"],
+    "description": "[Frontend] JavaScript to handle add item form submission (use inside <script>)",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const API = '${1:http://localhost:3000/api/items}';",
+      "",
+      "async function addItem() {",
+      "  const ${2:name} = document.getElementById('${2:name}').value;",
+      "  const ${3:desc} = document.getElementById('${3:desc}').value;",
+      "  const ${4:price} = parseFloat(document.getElementById('${4:price}').value);",
+      "  if (!${2:name} || isNaN(${4:price})) return alert('${5:Name} and ${6:Price} required');",
+      "",
+      "  await fetch(API, {",
+      "    method: 'POST',",
+      "    headers: { 'Content-Type': 'application/json' },",
+      "    body: JSON.stringify({ ${2:name}, ${3:desc}, ${4:price} })",
+      "  });",
+      "",
+      "  document.getElementById('${7:addForm}').reset();",
+      "  if (typeof loadItems === 'function') loadItems();",
+      "}"
+    ]
+  },
+
+  "Full Page JS Functions": {
+    "prefix": ["njs-page-js", "njs-pj"],
+    "description": "[Frontend] All JS functions for item manager page (use inside <script>)",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "const API = '${1:http://localhost:3000/api/items}';",
+      "",
+      "async function loadItems() {",
+      "  const res = await fetch(API);",
+      "  const items = await res.json();",
+      "  const list = document.getElementById('list');",
+      "  if (!items.length) { list.innerHTML = '<p>No items yet.</p>'; return; }",
+      "  list.innerHTML = items.map(i => `",
+      "    <div class=\"item\">",
+      "      <div>",
+      "        <b>\\${i.${2:name}}</b> <span class=\"price\">\\$\\${i.${3:price}}</span>",
+      "        <p style=\"margin:4px 0 0;color:#555;\">\\${i.${4:description} || ''}</p>",
+      "      </div>",
+      "      <button class=\"delete\" onclick=\"remove(\\${i.id})\">Delete</button>",
+      "    </div>",
+      "  `).join('');",
+      "}",
+      "",
+      "async function addItem() {",
+      "  const name = document.getElementById('name').value;",
+      "  const description = document.getElementById('desc').value;",
+      "  const price = parseFloat(document.getElementById('price').value);",
+      "  if (!name || isNaN(price)) return alert('${5:Name} and ${6:Price} required');",
+      "",
+      "  await fetch(API, {",
+      "    method: 'POST',",
+      "    headers: { 'Content-Type': 'application/json' },",
+      "    body: JSON.stringify({ name, description, price })",
+      "  });",
+      "",
+      "  document.getElementById('addForm').reset();",
+      "  loadItems();",
+      "}",
+      "",
+      "async function remove(id) {",
+      "  if (!confirm('Delete this item?')) return;",
+      "  await fetch(`\\${API}/\\${id}`, { method: 'DELETE' });",
+      "  loadItems();",
+      "}",
+      "",
+      "loadItems();"
+    ]
+  },
+
+  "Add Item JS Function": {
+    "prefix": ["njs-add-js", "njs-aj"],
+    "description": "[Frontend] Standalone async function to add an item via POST API",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "async function addItem() {",
+      "  const ${1:name} = document.getElementById('${1:name}').value;",
+      "  const ${2:description} = document.getElementById('${2:description}').value;",
+      "  const ${3:price} = parseFloat(document.getElementById('${3:price}').value);",
+      "  if (!${1:name} || isNaN(${3:price})) return alert('${4:Name} and ${5:Price} required');",
+      "",
+      "  await fetch(API, {",
+      "    method: 'POST',",
+      "    headers: { 'Content-Type': 'application/json' },",
+      "    body: JSON.stringify({ ${1:name}, ${2:description}, ${3:price} })",
+      "  });",
+      "",
+      "  document.getElementById('${6:addForm}').reset();",
+      "  if (typeof loadItems === 'function') loadItems();",
+      "}"
+    ]
+  },
+
+  "Update Item JS Function": {
+    "prefix": ["njs-update-js", "njs-uj"],
+    "description": "[Frontend] Standalone async function to update an item via PUT API",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "async function updateItem(id) {",
+      "  const ${1:name} = document.getElementById('${1:name}').value;",
+      "  const ${2:description} = document.getElementById('${2:description}').value;",
+      "  const ${3:price} = parseFloat(document.getElementById('${3:price}').value);",
+      "  if (!${1:name} || isNaN(${3:price})) return alert('${4:Name} and ${5:Price} required');",
+      "",
+      "  await fetch(`\\${API}/\\${id}`, {",
+      "    method: 'PUT',",
+      "    headers: { 'Content-Type': 'application/json' },",
+      "    body: JSON.stringify({ ${1:name}, ${2:description}, ${3:price} })",
+      "  });",
+      "",
+      "  if (typeof loadItems === 'function') loadItems();",
+      "}"
+    ]
+  },
+
+  "Delete Item JS Function": {
+    "prefix": ["njs-delete-js", "njs-dj"],
+    "description": "[Frontend] Standalone async function to delete an item via DELETE API",
+    "body": [
+      "// Requires: jsonwebtoken, dotenv | Insert near routes section",
+     "async function remove(id) {",
+      "  if (!confirm('Delete this item?')) return;",
+      "  await fetch(`\\${API}/\\${id}`, { method: 'DELETE' });",
+      "  if (typeof loadItems === 'function') loadItems();",
+      "}"
+    ]
+  }
+}

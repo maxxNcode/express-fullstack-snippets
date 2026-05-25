@@ -1,0 +1,31 @@
+{
+  "name": "node-sqlite-snippets",
+  "displayName": "Node SQLite Server Snippets",
+  "description": "Quick snippets for Express, SQLite3, Node.js backends and HTML frontend boilerplates - build fullstack apps faster.",
+  "version": "1.15.0",
+  "publisher": "maxxNcode",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/node-sqlite-snippets.git"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": ["Snippets"],
+  "contributes": {
+    "snippets": [
+      {
+        "language": "javascript",
+        "path": "./snippets/javascript.json"
+      },
+      {
+        "language": "html",
+        "path": "./snippets/html.json"
+      }
+    ]
+  }
+}
+
+
