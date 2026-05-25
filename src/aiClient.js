@@ -19,9 +19,9 @@ class AiClient {
             const body = JSON.stringify({
                 prompt: fullPrompt,
                 n_predict: maxTokens,
-                temperature: 0.2,
-                stop: ['<|im_end|>', '<|im_start|>', '<｜end▁of▁sentence｜>'],
-                cache_prompt: true
+                temperature: 0.1,
+                stop: ['<|im_end|>', '<｜end▁of▁sentence｜>'],
+                cache_prompt: false
             });
 
             const req = http.request(

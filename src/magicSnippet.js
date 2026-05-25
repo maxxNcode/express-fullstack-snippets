@@ -98,13 +98,12 @@ class MagicSnippetHandler {
 
     async callAI(prompt, systemContext) {
         try {
-            const code = await this.aiClient.complete(prompt, systemContext, this.MAX_TOKENS);
-            return code
-                .replace(/^```(?:javascript|js)?\n?/i, '')
-                .replace(/\n?```\s*$/, '')
+            const raw = await this.aiClient.complete(prompt, systemContext, this.MAX_TOKENS);
+            return raw
                 .replace(/<\|im_start\|>/g, '')
                 .replace(/<\|im_end\|>/g, '')
                 .replace(/<\|endoftext\|>/g, '')
+                .replace(/^```.*$/gm, '')
                 .trim();
         } catch (e) {
             console.error('AI call error:', e);
@@ -125,7 +124,9 @@ class MagicSnippetHandler {
         // Default: generate new code for the current file type
         const lang = document.languageId;
         const langHint = lang === 'html' ? 'HTML' : lang === 'javascript' ? 'JavaScript' : lang.toUpperCase();
-        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nUse snippets when they match the request. Combine if needed. Write from scratch if nothing fits. Output ONLY valid ${langHint} code matching the current file. No explanations, no markdown.`;
+        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\n${lang === 'html'
+            ? 'Output a single HTML file with embedded CSS and JS. All code in one ```html block, nothing else.'
+            : `Output ONLY valid ${langHint} code. One code block, no explanations, no labels.`}`;
 
         try {
             const response = await vscode.window.withProgress(
