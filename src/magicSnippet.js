@@ -1,5 +1,6 @@
 const vscode = require('vscode');
 const fs = require('fs');
+const path = require('path');
 
 class MagicSnippetHandler {
     constructor(aiClient, context) {
@@ -7,6 +8,7 @@ class MagicSnippetHandler {
         this.snippets = this.buildSnippetsContext(context);
         this.disposables = [];
         this.requestCounter = 0;
+        this.MAX_TOKENS = 2048;
         this.setupEnterListener(context);
         this.setupSelectionListener(context);
     }
@@ -83,19 +85,45 @@ class MagicSnippetHandler {
         this.disposables.push(disposable);
     }
 
+    async fixSelection(selectedText, instruction) {
+        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nFix the provided code based on the instruction. Output ONLY the fixed code. No explanations, no markdown.`;
+        const prompt = `Code to fix:\n${selectedText}\n\nInstruction: ${instruction}`;
+        return await this.callAI(prompt, systemContext);
+    }
+
+    async editFile(fileContent, instruction) {
+        const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nEdit the provided file based on the instruction. Output ONLY the complete edited file content. No explanations, no markdown.`;
+        const prompt = `File content:\n${fileContent}\n\nInstruction: ${instruction}`;
+        return await this.callAI(prompt, systemContext);
+    }
+
+    async callAI(prompt, systemContext) {
+        try {
+            const code = await this.aiClient.complete(prompt, systemContext, this.MAX_TOKENS);
+            return code.replace(/^```(?:javascript|js)?\n?/i, '').replace(/\n?```\s*$/, '').trim();
+        } catch (e) {
+            console.error('AI call error:', e);
+            return null;
+        }
+    }
+
     async triggerGeneration(document, lineNumber, lineText, instruction) {
         const requestId = ++this.requestCounter;
 
+        // Check for "in FILEPATH instruction" mode (file editing)
+        const fileMatch = instruction.match(/^in\s+(\S+)\s+(.+)/);
+        if (fileMatch) {
+            await this.handleFileEdit(requestId, document, lineNumber, lineText, fileMatch[1], fileMatch[2]);
+            return;
+        }
+
+        // Default: generate new code
         const systemContext = `You are a code assistant for Express + SQLite backends.\nAvailable snippets:\n${this.snippets}\n\nUse snippets when they match the request. Combine if needed. Write from scratch if nothing fits. Output ONLY valid JavaScript code. No explanations, no markdown.`;
 
         try {
             const response = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Window, title: 'AI generating...' },
-                async () => {
-                    const code = await this.aiClient.complete(instruction, systemContext, 512);
-                    const cleaned = code.replace(/^```(?:javascript|js)?\n?/i, '').replace(/\n?```\s*$/, '').trim();
-                    return cleaned || null;
-                }
+                async () => await this.callAI(instruction, systemContext)
             );
 
             if (!response || requestId !== this.requestCounter) return;
@@ -106,6 +134,52 @@ class MagicSnippetHandler {
             await vscode.workspace.applyEdit(edit);
         } catch (e) {
             console.error('AI generation error:', e);
+        }
+    }
+
+    async handleFileEdit(requestId, document, lineNumber, lineText, filePath, instruction) {
+        try {
+            // Find target file in workspace
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) {
+                vscode.window.showErrorMessage('AI: No workspace folder open');
+                return;
+            }
+
+            const targetUri = vscode.Uri.joinPath(workspaceFolders[0].uri, filePath);
+            let fileContent;
+            try {
+                const fileData = await vscode.workspace.fs.readFile(targetUri);
+                fileContent = Buffer.from(fileData).toString('utf8');
+            } catch {
+                vscode.window.showErrorMessage(`AI: File "${filePath}" not found in workspace`);
+                return;
+            }
+
+            const response = await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Window, title: 'AI editing file...' },
+                async () => await this.editFile(fileContent, instruction)
+            );
+
+            if (!response || requestId !== this.requestCounter) return;
+
+            // Write edited content back
+            const edit = new vscode.WorkspaceEdit();
+            const fullRange = new vscode.Range(0, 0, document.lineCount - 1, document.lineAt(document.lineCount - 1).text.length);
+            edit.replace(targetUri, fullRange, response);
+            const applied = await vscode.workspace.applyEdit(edit);
+
+            // Remove the njs: line from original document
+            const cleanEdit = new vscode.WorkspaceEdit();
+            const cleanRange = new vscode.Range(lineNumber, 0, lineNumber, lineText.length);
+            cleanEdit.replace(document.uri, cleanRange, '');
+            await vscode.workspace.applyEdit(cleanEdit);
+
+            if (applied) {
+                vscode.window.showInformationMessage(`AI: Edited ${filePath}`);
+            }
+        } catch (e) {
+            console.error('AI file edit error:', e);
         }
     }
 

@@ -49,6 +49,45 @@ function activate(context) {
         })
     );
 
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.fixSelection', async () => {
+            if (!magicHandler) {
+                vscode.window.showErrorMessage('AI: Turn on AI first (AI: Turn On)');
+                return;
+            }
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) return;
+
+            const selection = editor.selection;
+            if (selection.isEmpty) {
+                vscode.window.showErrorMessage('AI: Select some code first');
+                return;
+            }
+
+            const selectedText = editor.document.getText(selection);
+
+            const instruction = await vscode.window.showInputBox({
+                prompt: 'Describe the fix...',
+                placeHolder: 'e.g. fix the error handling, use async/await',
+                ignoreFocusOut: true
+            });
+
+            if (!instruction) return;
+
+            vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Window, title: 'AI fixing code...' },
+                async () => {
+                    const response = await magicHandler.fixSelection(selectedText, instruction);
+                    if (!response) return;
+
+                    const edit = new vscode.WorkspaceEdit();
+                    edit.replace(editor.document.uri, selection, response);
+                    await vscode.workspace.applyEdit(edit);
+                }
+            );
+        })
+    );
+
     context.subscriptions.push({ dispose: () => serverManager.stop() });
 }
 

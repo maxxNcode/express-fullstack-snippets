@@ -29,6 +29,10 @@
       {
         "command": "node-sqlite-ai.magicComplete",
         "title": "AI: Generate from njs: instruction"
+      },
+      {
+        "command": "node-sqlite-ai.fixSelection",
+        "title": "AI: Fix Selected Code"
       }
     ],
     "keybindings": [
@@ -36,6 +40,11 @@
         "key": "tab",
         "command": "node-sqlite-ai.magicComplete",
         "when": "editorTextFocus && njsAiEnabled && njsMagicLine && !suggestWidgetVisible && !inlineSuggestionVisible"
+      },
+      {
+        "key": "ctrl+shift+f",
+        "command": "node-sqlite-ai.fixSelection",
+        "when": "editorTextFocus && njsAiEnabled"
       }
     ],
     "configuration": {
