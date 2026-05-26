@@ -82,6 +82,26 @@
         "path": "./snippets/javascript.json"
       },
       {
+        "language": "json",
+        "path": "./snippets/javascript.json"
+      },
+      {
+        "language": "jsonc",
+        "path": "./snippets/javascript.json"
+      },
+      {
+        "language": "typescript",
+        "path": "./snippets/javascript.json"
+      },
+      {
+        "language": "javascriptreact",
+        "path": "./snippets/javascript.json"
+      },
+      {
+        "language": "typescriptreact",
+        "path": "./snippets/javascript.json"
+      },
+      {
         "language": "html",
         "path": "./snippets/html.json"
       }

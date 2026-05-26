@@ -130,10 +130,10 @@ class MagicSnippetHandler {
 
         // Default: generate new code for the current file type
         const lang = document.languageId;
-        const langHint = lang === 'html' ? 'HTML' : lang === 'javascript' ? 'JavaScript' : lang.toUpperCase();
-        const systemContext = `Available snippets:\n${this.snippets}\n\n${lang === 'html'
+        const isHtml = lang === 'html';
+        const systemContext = `Available snippets:\n${this.snippets}\n\n${isHtml
             ? 'Write a single, complete HTML file with inline CSS and JS. One ```html block only.'
-            : `Write complete ${langHint} code. One code block only. No explanations.`}
+            : 'Write complete JavaScript code using the snippets above. One ```javascript block only. No explanations.'}
 
 Output the full file, not a partial example. Never use external files or CDNs unless required.`;
 
