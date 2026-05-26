@@ -4,3 +4,4 @@ vsix_temp/
 node_modules/
 docs/
 MY-STORE-GUIDE.md
+models/
