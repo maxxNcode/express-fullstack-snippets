@@ -3,8 +3,9 @@ const fs = require('fs');
 const path = require('path');
 
 class MagicSnippetHandler {
-    constructor(aiClient, context) {
+    constructor(aiClient, context, options = {}) {
         this.aiClient = aiClient;
+        this.trained = options.trained || false;
         this.snippets = this.buildSnippetsContext(context);
         this.disposables = [];
         this.requestCounter = 0;
@@ -21,7 +22,13 @@ class MagicSnippetHandler {
             const lines = [];
             for (const [name, data] of Object.entries(parsed)) {
                 const prefixes = Array.isArray(data.prefix) ? data.prefix.join(', ') : data.prefix;
-                lines.push(`- ${prefixes}: ${data.description}`);
+                if (this.trained) {
+                    const body = Array.isArray(data.body) ? data.body.join('\n') : data.body;
+                    const clean = body.replace(/\$\{\d+:([^}]*)\}/g, '$1').replace(/\$\{\d+\|([^}]+)\|}/g, '$1');
+                    lines.push(`Snippet "${prefixes}" (${data.description}):\n\`\`\`javascript\n${clean}\n\`\`\``);
+                } else {
+                    lines.push(`- ${prefixes}: ${data.description}`);
+                }
             }
             return lines.join('\n');
         } catch (e) {

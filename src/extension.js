@@ -27,10 +27,38 @@ function activate(context) {
                 aiClient.setPort(port);
 
                 vscode.commands.executeCommand('setContext', 'njsAiEnabled', true);
+                vscode.commands.executeCommand('setContext', 'njsAiTrained', false);
 
-                magicHandler = new MagicSnippetHandler(aiClient, context);
+                magicHandler = new MagicSnippetHandler(aiClient, context, { trained: false });
 
                 vscode.window.showInformationMessage('AI: Turned on and ready');
+            } catch (err) {
+                vscode.window.showErrorMessage(`AI: Failed to start — ${err.message}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.trained-enable', async () => {
+            if (serverManager.isRunning()) {
+                vscode.window.showInformationMessage('AI: Already running. Turn off first to switch mode.');
+                return;
+            }
+
+            const port = vscode.workspace.getConfiguration('node-sqlite-ai').get('port');
+            const modelPath = vscode.Uri.joinPath(context.extensionUri, 'models', 'qwen2.5-coder-1.5b-instruct.q3_k_m.gguf').fsPath;
+            const serverPath = vscode.Uri.joinPath(context.extensionUri, 'bin', 'llama-server.exe').fsPath;
+
+            try {
+                await serverManager.start(port, modelPath, serverPath);
+                aiClient.setPort(port);
+
+                vscode.commands.executeCommand('setContext', 'njsAiEnabled', true);
+                vscode.commands.executeCommand('setContext', 'njsAiTrained', true);
+
+                magicHandler = new MagicSnippetHandler(aiClient, context, { trained: true });
+
+                vscode.window.showInformationMessage('AI: Trained mode — AI knows all snippet bodies');
             } catch (err) {
                 vscode.window.showErrorMessage(`AI: Failed to start — ${err.message}`);
             }
@@ -45,6 +73,7 @@ function activate(context) {
             }
             serverManager.stop();
             vscode.commands.executeCommand('setContext', 'njsAiEnabled', false);
+            vscode.commands.executeCommand('setContext', 'njsAiTrained', false);
             vscode.window.showInformationMessage('AI: Turned off');
         })
     );
@@ -52,7 +81,7 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('node-sqlite-ai.fixSelection', async () => {
             if (!magicHandler) {
-                vscode.window.showErrorMessage('AI: Turn on AI first (AI: Turn On)');
+                vscode.window.showErrorMessage('AI: Turn on AI first (AI: Turn On or AI: Trained On)');
                 return;
             }
             const editor = vscode.window.activeTextEditor;

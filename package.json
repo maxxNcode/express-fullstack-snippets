@@ -23,6 +23,10 @@
         "title": "AI: Turn On"
       },
       {
+        "command": "node-sqlite-ai.trained-enable",
+        "title": "AI: Trained On"
+      },
+      {
         "command": "node-sqlite-ai.disable",
         "title": "AI: Turn Off"
       },
@@ -45,6 +49,11 @@
         "key": "ctrl+shift+f",
         "command": "node-sqlite-ai.fixSelection",
         "when": "editorTextFocus && njsAiEnabled"
+      },
+      {
+        "key": "ctrl+shift+t",
+        "command": "node-sqlite-ai.trained-enable",
+        "when": "!njsAiEnabled"
       }
     ],
     "configuration": {
