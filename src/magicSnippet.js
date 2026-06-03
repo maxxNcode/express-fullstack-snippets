@@ -3,8 +3,9 @@ const fs = require('fs');
 const path = require('path');
 
 class MagicSnippetHandler {
-    constructor(aiClient, context, options = {}) {
+    constructor(aiClient, context, schemaRegistry, options = {}) {
         this.aiClient = aiClient;
+        this.schemaRegistry = schemaRegistry;
         this.trained = options.trained || false;
         this.snippets = this.buildSnippetsContext(context);
         this.disposables = [];
@@ -54,6 +55,12 @@ class MagicSnippetHandler {
                 const instruction = lineText.substring(prefix.length).trim();
                 if (!instruction) continue;
 
+                if (instruction.startsWith('register ')) {
+                    const spec = instruction.substring(9).trim();
+                    this.handleRegistration(event.document, njsLine, lineText, spec);
+                    return;
+                }
+
                 this.triggerGeneration(event.document, njsLine, lineText, instruction);
             }
         });
@@ -69,6 +76,13 @@ class MagicSnippetHandler {
             if (!lineText.startsWith(prefix)) return;
             const instruction = lineText.substring(prefix.length).trim();
             if (!instruction) return;
+
+            if (instruction.startsWith('register ')) {
+                const spec = instruction.substring(9).trim();
+                this.handleRegistration(editor.document, cursorLine, lineText, spec);
+                return;
+            }
+
             this.triggerGeneration(editor.document, cursorLine, lineText, instruction);
         });
         context.subscriptions.push(cmdDisposable);
@@ -89,6 +103,20 @@ class MagicSnippetHandler {
         });
         context.subscriptions.push(disposable);
         this.disposables.push(disposable);
+    }
+
+    async handleRegistration(document, lineNumber, lineText, spec) {
+        try {
+            const { tableName, fields } = this.schemaRegistry.parseInlineSpec(spec);
+            await this.schemaRegistry.addTable(tableName, fields);
+            vscode.window.showInformationMessage(`njs: Table "${tableName}" registered with ${fields.length} fields`);
+            const edit = new vscode.WorkspaceEdit();
+            const range = new vscode.Range(lineNumber, 0, lineNumber, lineText.length);
+            edit.replace(document.uri, range, `// Table "${tableName}" registered`);
+            await vscode.workspace.applyEdit(edit);
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
     }
 
     async fixSelection(selectedText, instruction) {
@@ -121,14 +149,12 @@ class MagicSnippetHandler {
     async triggerGeneration(document, lineNumber, lineText, instruction) {
         const requestId = ++this.requestCounter;
 
-        // Check for "in FILEPATH instruction" mode (file editing)
         const fileMatch = instruction.match(/^in\s+(\S+)\s+(.+)/);
         if (fileMatch) {
             await this.handleFileEdit(requestId, document, lineNumber, lineText, fileMatch[1], fileMatch[2]);
             return;
         }
 
-        // Default: generate new code for the current file type
         const lang = document.languageId;
         const isHtml = lang === 'html';
         const systemContext = `Available snippets:\n${this.snippets}\n\n${isHtml
@@ -156,7 +182,6 @@ Output the full file, not a partial example. Never use external files or CDNs un
 
     async handleFileEdit(requestId, document, lineNumber, lineText, filePath, instruction) {
         try {
-            // Find target file in workspace
             const workspaceFolders = vscode.workspace.workspaceFolders;
             if (!workspaceFolders) {
                 vscode.window.showErrorMessage('AI: No workspace folder open');
@@ -180,7 +205,6 @@ Output the full file, not a partial example. Never use external files or CDNs un
 
             if (!response || requestId !== this.requestCounter) return;
 
-            // Write edited content back to target file
             const lines = fileContent.split('\n');
             const targetLastLine = lines.length - 1;
             const targetLastLineLen = lines[targetLastLine].length;
@@ -189,7 +213,6 @@ Output the full file, not a partial example. Never use external files or CDNs un
             edit.replace(targetUri, targetRange, response);
             const applied = await vscode.workspace.applyEdit(edit);
 
-            // Remove the njs: line from original document
             const cleanEdit = new vscode.WorkspaceEdit();
             const cleanRange = new vscode.Range(lineNumber, 0, lineNumber, lineText.length);
             cleanEdit.replace(document.uri, cleanRange, '');

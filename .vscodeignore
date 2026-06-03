@@ -6,5 +6,5 @@ vsix_temp/**
 node_modules/**
 *.vsix
 MY-STORE-GUIDE.md
-docs/**
+docs/superpowers/**
 future_plans.md

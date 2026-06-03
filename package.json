@@ -1,8 +1,8 @@
 {
   "name": "node-sqlite-snippets",
   "displayName": "Node SQLite Server Snippets",
-  "description": "Quick snippets for Express, SQLite3, Node.js backends and HTML frontend boilerplates - build fullstack apps faster.",
-  "version": "1.16.0",
+  "description": "Schema-aware dynamic code generator for Express SQLite apps. Register any table schema, then generate CRUD routes + HTML + JS with one snippet.",
+  "version": "2.0.0",
   "publisher": "maxxNcode",
   "license": "MIT",
   "icon": "icon.png",
@@ -37,6 +37,22 @@
       {
         "command": "node-sqlite-ai.fixSelection",
         "title": "AI: Fix Selected Code"
+      },
+      {
+        "command": "node-sqlite-ai.registerTable",
+        "title": "njs: Register Table"
+      },
+      {
+        "command": "node-sqlite-ai.showStatus",
+        "title": "njs: Schema Status"
+      },
+      {
+        "command": "node-sqlite-ai.manageFK",
+        "title": "njs: Add Foreign Key"
+      },
+      {
+        "command": "node-sqlite-ai.removeFK",
+        "title": "njs: Remove Foreign Key"
       }
     ],
     "keybindings": [

@@ -2,14 +2,67 @@ const vscode = require('vscode');
 const { ServerManager } = require('./serverManager');
 const { AiClient } = require('./aiClient');
 const { MagicSnippetHandler } = require('./magicSnippet');
+const { SchemaRegistry } = require('./schemaRegistry');
+const { DynamicSnippetProvider } = require('./dynamicProvider');
+const { FkManager } = require('./fkManager');
 
 let serverManager;
 let aiClient;
 let magicHandler = null;
+let schemaRegistry;
+let dynamicProvider = null;
+let fkManager;
 
 function activate(context) {
     serverManager = new ServerManager();
     aiClient = new AiClient();
+
+    schemaRegistry = new SchemaRegistry();
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+    if (workspaceRoot) {
+        schemaRegistry.init(workspaceRoot).then(() => {
+            dynamicProvider = new DynamicSnippetProvider(schemaRegistry);
+            context.subscriptions.push(
+                vscode.languages.registerCompletionItemProvider(
+                    ['javascript', 'html', 'json', 'jsonc', 'typescript', 'javascriptreact', 'typescriptreact'],
+                    dynamicProvider,
+                    '-'
+                )
+            );
+        });
+    }
+
+    fkManager = new FkManager(schemaRegistry);
+
+    // Always-on njs:register handler (AI-independent)
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument(async (event) => {
+            const prefix = vscode.workspace.getConfiguration('node-sqlite-ai').get('magicPrefix') || 'njs:';
+            for (const change of event.contentChanges) {
+                const text = change.text;
+                const isEnter = text === '\n' || text === '\r\n';
+                if (!isEnter) continue;
+                const lineNum = change.range.start.line;
+                if (lineNum < 0) continue;
+                const lineText = event.document.lineAt(lineNum).text;
+                if (!lineText.startsWith(prefix)) continue;
+                const instruction = lineText.substring(prefix.length).trim();
+                if (!instruction.startsWith('register ')) continue;
+                const spec = instruction.substring(9).trim();
+                try {
+                    const { tableName, fields } = schemaRegistry.parseInlineSpec(spec);
+                    await schemaRegistry.addTable(tableName, fields);
+                    vscode.window.showInformationMessage(`njs: Table "${tableName}" registered`);
+                    const edit = new vscode.WorkspaceEdit();
+                    const range = new vscode.Range(lineNum, 0, lineNum, lineText.length);
+                    edit.replace(event.document.uri, range, `// Table "${tableName}" registered`);
+                    await vscode.workspace.applyEdit(edit);
+                } catch (err) {
+                    vscode.window.showErrorMessage(`njs: ${err.message}`);
+                }
+            }
+        })
+    );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('node-sqlite-ai.enable', async () => {
@@ -29,7 +82,7 @@ function activate(context) {
                 vscode.commands.executeCommand('setContext', 'njsAiEnabled', true);
                 vscode.commands.executeCommand('setContext', 'njsAiTrained', false);
 
-                magicHandler = new MagicSnippetHandler(aiClient, context, { trained: false });
+                magicHandler = new MagicSnippetHandler(aiClient, context, schemaRegistry, { trained: false });
 
                 vscode.window.showInformationMessage('AI: Turned on and ready');
             } catch (err) {
@@ -56,7 +109,7 @@ function activate(context) {
                 vscode.commands.executeCommand('setContext', 'njsAiEnabled', true);
                 vscode.commands.executeCommand('setContext', 'njsAiTrained', true);
 
-                magicHandler = new MagicSnippetHandler(aiClient, context, { trained: true });
+                magicHandler = new MagicSnippetHandler(aiClient, context, schemaRegistry, { trained: true });
 
                 vscode.window.showInformationMessage('AI: Trained mode — AI knows all snippet bodies');
             } catch (err) {
@@ -114,6 +167,66 @@ function activate(context) {
                     await vscode.workspace.applyEdit(edit);
                 }
             );
+        })
+    );
+
+    // Schema commands
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.registerTable', async () => {
+            const tableName = await vscode.window.showInputBox({
+                prompt: 'Table name',
+                placeHolder: 'e.g. Items',
+                ignoreFocusOut: true
+            });
+            if (!tableName) return;
+
+            const fieldsStr = await vscode.window.showInputBox({
+                prompt: 'Fields (comma-separated)',
+                placeHolder: 'id PRIMARY, name TEXT NOT NULL, price REAL DEFAULT 0',
+                ignoreFocusOut: true
+            });
+            if (!fieldsStr) return;
+
+            try {
+                const { fields } = schemaRegistry.parseInlineSpec(`${tableName}:${fieldsStr}`);
+                await schemaRegistry.addTable(tableName, fields);
+                vscode.window.showInformationMessage(`njs: Table "${tableName}" registered`);
+            } catch (err) {
+                vscode.window.showErrorMessage(`njs: ${err.message}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.showStatus', async () => {
+            const tables = schemaRegistry.getTables();
+            if (!tables.length) {
+                vscode.window.showInformationMessage('njs: No tables registered');
+                return;
+            }
+            const pick = await vscode.window.showQuickPick(tables.map(t => ({
+                label: t,
+                detail: `${schemaRegistry.getTable(t).fields.length} fields`
+            })), { placeHolder: 'Registered tables' });
+            if (pick) {
+                const table = schemaRegistry.getTable(pick.label);
+                const fields = table.fields.map(f =>
+                    `${f.name} (${f.type})${f.pk ? ' PK' : ''}${f.fk ? ` FK->${f.fk.table}(${f.fk.field})` : ''}`
+                ).join('\n');
+                vscode.window.showInformationMessage(`njs: ${pick.label}\n${fields}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.manageFK', () => {
+            fkManager.addForeignKey();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.removeFK', async () => {
+            fkManager.removeForeignKey();
         })
     );
 
