@@ -5,6 +5,7 @@ const { MagicSnippetHandler } = require('./magicSnippet');
 const { SchemaRegistry } = require('./schemaRegistry');
 const { DynamicSnippetProvider } = require('./dynamicProvider');
 const { FkManager } = require('./fkManager');
+const { CodeGenerator } = require('./generator');
 
 let serverManager;
 let aiClient;
@@ -18,9 +19,11 @@ function activate(context) {
     aiClient = new AiClient();
 
     schemaRegistry = new SchemaRegistry();
+    let codeGenerator = null;
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
     if (workspaceRoot) {
         schemaRegistry.init(workspaceRoot).then(() => {
+            codeGenerator = new CodeGenerator(schemaRegistry);
             dynamicProvider = new DynamicSnippetProvider(schemaRegistry);
             context.subscriptions.push(
                 vscode.languages.registerCompletionItemProvider(
@@ -34,7 +37,7 @@ function activate(context) {
 
     fkManager = new FkManager(schemaRegistry);
 
-    // Always-on njs:register handler (AI-independent)
+    // Always-on njs: register / remove / modify handler (AI-independent)
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument(async (event) => {
             const prefix = vscode.workspace.getConfiguration('node-sqlite-ai').get('magicPrefix') || 'njs:';
@@ -47,18 +50,62 @@ function activate(context) {
                 const lineText = event.document.lineAt(lineNum).text;
                 if (!lineText.startsWith(prefix)) continue;
                 const instruction = lineText.substring(prefix.length).trim();
-                if (!instruction.startsWith('register ')) continue;
-                const spec = instruction.substring(9).trim();
-                try {
-                    const { tableName, fields } = schemaRegistry.parseInlineSpec(spec);
-                    await schemaRegistry.addTable(tableName, fields);
-                    vscode.window.showInformationMessage(`njs: Table "${tableName}" registered`);
-                    const edit = new vscode.WorkspaceEdit();
-                    const range = new vscode.Range(lineNum, 0, lineNum, lineText.length);
-                    edit.replace(event.document.uri, range, `// Table "${tableName}" registered`);
-                    await vscode.workspace.applyEdit(edit);
-                } catch (err) {
-                    vscode.window.showErrorMessage(`njs: ${err.message}`);
+                if (!instruction) continue;
+
+                // njs:register TableName:fieldDef, fieldDef, ...
+                const registerMatch = instruction.match(/^register\s+(.+)/);
+                if (registerMatch) {
+                    const spec = registerMatch[1].trim();
+                    try {
+                        const { tableName, fields } = schemaRegistry.parseInlineSpec(spec);
+                        await schemaRegistry.addTable(tableName, fields);
+                        vscode.window.showInformationMessage(`njs: Table "${tableName}" registered`);
+                        const edit = new vscode.WorkspaceEdit();
+                        const range = new vscode.Range(lineNum, 0, lineNum, lineText.length);
+                        const createTableSql = codeGenerator ? codeGenerator.generateCreateTable(tableName) : '';
+                        edit.replace(event.document.uri, range, `// Table "${tableName}" registered\n\n${createTableSql}`);
+                        await vscode.workspace.applyEdit(edit);
+                    } catch (err) {
+                        vscode.window.showErrorMessage(`njs: ${err.message}`);
+                    }
+                    return;
+                }
+
+                // njs:remove TableName  or  njs:unregister TableName
+                const removeMatch = instruction.match(/^(?:remove|unregister)\s+(.+)/);
+                if (removeMatch) {
+                    const tableName = removeMatch[1].trim();
+                    try {
+                        await schemaRegistry.removeTable(tableName);
+                        vscode.window.showInformationMessage(`njs: Table "${tableName}" removed from schema`);
+                        const edit = new vscode.WorkspaceEdit();
+                        const range = new vscode.Range(lineNum, 0, lineNum, lineText.length);
+                        edit.replace(event.document.uri, range, `// Table "${tableName}" removed from schema`);
+                        await vscode.workspace.applyEdit(edit);
+                    } catch (err) {
+                        vscode.window.showErrorMessage(`njs: ${err.message}`);
+                    }
+                    return;
+                }
+
+                // njs:modify TableName:fieldDef, fieldDef, ...
+                const modifyMatch = instruction.match(/^modify\s+(.+)/);
+                if (modifyMatch) {
+                    const spec = modifyMatch[1].trim();
+                    try {
+                        const { tableName, fields } = schemaRegistry.parseInlineSpec(spec);
+                        await schemaRegistry.removeTable(tableName);
+                        await schemaRegistry.addTable(tableName, fields);
+                        vscode.window.showInformationMessage(`njs: Table "${tableName}" modified (${fields.length} fields)`);
+                        const edit = new vscode.WorkspaceEdit();
+                        const range = new vscode.Range(lineNum, 0, lineNum, lineText.length);
+                        const createTableSql = codeGenerator ? codeGenerator.generateCreateTable(tableName) : '';
+                        edit.replace(event.document.uri, range, `// Table "${tableName}" modified\n\n${createTableSql}`);
+                        await vscode.workspace.applyEdit(edit);
+                    } catch (err) {
+                        vscode.window.showErrorMessage(`njs: ${err.message}`);
+                    }
+                    return;
                 }
             }
         })
@@ -191,6 +238,62 @@ function activate(context) {
                 const { fields } = schemaRegistry.parseInlineSpec(`${tableName}:${fieldsStr}`);
                 await schemaRegistry.addTable(tableName, fields);
                 vscode.window.showInformationMessage(`njs: Table "${tableName}" registered`);
+            } catch (err) {
+                vscode.window.showErrorMessage(`njs: ${err.message}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.removeTable', async () => {
+            const tables = schemaRegistry.getTables();
+            if (!tables.length) {
+                vscode.window.showInformationMessage('njs: No tables to remove');
+                return;
+            }
+            const pick = await vscode.window.showQuickPick(tables.map(t => ({
+                label: t,
+                detail: `${schemaRegistry.getTable(t).fields.length} fields`
+            })), { placeHolder: 'Select table to remove' });
+            if (!pick) return;
+            try {
+                await schemaRegistry.removeTable(pick.label);
+                vscode.window.showInformationMessage(`njs: Table "${pick.label}" removed`);
+            } catch (err) {
+                vscode.window.showErrorMessage(`njs: ${err.message}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.modifyTable', async () => {
+            const tables = schemaRegistry.getTables();
+            if (!tables.length) {
+                vscode.window.showInformationMessage('njs: No tables to modify');
+                return;
+            }
+            const pick = await vscode.window.showQuickPick(tables.map(t => ({
+                label: t,
+                detail: `${schemaRegistry.getTable(t).fields.length} fields`
+            })), { placeHolder: 'Select table to modify' });
+            if (!pick) return;
+
+            const table = schemaRegistry.getTable(pick.label);
+            const currentFields = table.fields.map(f =>
+                `${f.name} ${f.type}${f.pk ? ' PRIMARY' : ''}${f.notNull ? ' NOT NULL' : ''}${f.default !== undefined ? ` DEFAULT ${f.default}` : ''}${f.fk ? ` FK->${f.fk.table}(${f.fk.field})` : ''}`
+            ).join(', ');
+            const fieldsStr = await vscode.window.showInputBox({
+                prompt: `New fields for "${pick.label}" (comma-separated)`,
+                placeHolder: currentFields,
+                ignoreFocusOut: true
+            });
+            if (!fieldsStr) return;
+
+            try {
+                const { fields } = schemaRegistry.parseInlineSpec(`${pick.label}:${fieldsStr}`);
+                await schemaRegistry.removeTable(pick.label);
+                await schemaRegistry.addTable(pick.label, fields);
+                vscode.window.showInformationMessage(`njs: Table "${pick.label}" modified (${fields.length} fields)`);
             } catch (err) {
                 vscode.window.showErrorMessage(`njs: ${err.message}`);
             }

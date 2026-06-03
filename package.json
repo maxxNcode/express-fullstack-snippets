@@ -43,6 +43,14 @@
         "title": "njs: Register Table"
       },
       {
+        "command": "node-sqlite-ai.removeTable",
+        "title": "njs: Remove Table"
+      },
+      {
+        "command": "node-sqlite-ai.modifyTable",
+        "title": "njs: Modify Table Fields"
+      },
+      {
         "command": "node-sqlite-ai.showStatus",
         "title": "njs: Schema Status"
       },

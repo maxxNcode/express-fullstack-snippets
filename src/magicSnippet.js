@@ -1,11 +1,13 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const { CodeGenerator } = require('./generator');
 
 class MagicSnippetHandler {
     constructor(aiClient, context, schemaRegistry, options = {}) {
         this.aiClient = aiClient;
         this.schemaRegistry = schemaRegistry;
+        this.generator = new CodeGenerator(schemaRegistry);
         this.trained = options.trained || false;
         this.snippets = this.buildSnippetsContext(context);
         this.disposables = [];
@@ -110,9 +112,10 @@ class MagicSnippetHandler {
             const { tableName, fields } = this.schemaRegistry.parseInlineSpec(spec);
             await this.schemaRegistry.addTable(tableName, fields);
             vscode.window.showInformationMessage(`njs: Table "${tableName}" registered with ${fields.length} fields`);
+            const createTableSql = this.generator.generateCreateTable(tableName);
             const edit = new vscode.WorkspaceEdit();
             const range = new vscode.Range(lineNumber, 0, lineNumber, lineText.length);
-            edit.replace(document.uri, range, `// Table "${tableName}" registered`);
+            edit.replace(document.uri, range, `// Table "${tableName}" registered\n\n${createTableSql}`);
             await vscode.workspace.applyEdit(edit);
         } catch (err) {
             vscode.window.showErrorMessage(`njs: ${err.message}`);

@@ -264,6 +264,47 @@ class CodeGenerator {
         return this.generatePrepStatements(tableName) + '\n\n' + this.generateCrudRoutes(tableName);
     }
 
+    generateCreateTable(tableName) {
+        const table = this.schemaRegistry.getTable(tableName);
+        if (!table) return '// Table not found';
+        const pk = this.getPK(tableName);
+        const fields = table.fields;
+
+        const fieldLines = fields.map(f => {
+            let line = `    ${f.name} ${f.type}`;
+            if (f.pk) {
+                if (f.type === 'INTEGER') {
+                    line += ' PRIMARY KEY AUTOINCREMENT';
+                } else {
+                    line += ' PRIMARY KEY';
+                }
+            }
+            if (f.notNull) line += ' NOT NULL';
+            if (f.default !== undefined) {
+                let defVal = String(f.default).replace(/^['"]|['"]$/g, '');
+                if (f.type !== 'INTEGER' && f.type !== 'REAL') {
+                    defVal = `'${defVal}'`;
+                }
+                line += ` DEFAULT ${defVal}`;
+            }
+            if (f.fk) {
+                line += ` REFERENCES ${f.fk.table}(${f.fk.field})`;
+            }
+            return line;
+        });
+
+        const sql = [
+            `db.exec(\``,
+            `  CREATE TABLE IF NOT EXISTS ${tableName} (`,
+            fieldLines.join(',\n'),
+            `  )`,
+            `\`);`,
+            `console.log('Table ${tableName} is ready.');`
+        ].join('\n');
+
+        return sql;
+    }
+
     generate(snippetType, tableName) {
         switch (snippetType) {
             case 'crud': return this.generateCrud(tableName);
