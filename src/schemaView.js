@@ -1486,6 +1486,21 @@ class SchemaViewProvider {
         color: #888;
     }
 
+    /* Field toggle checkbox and active state */
+    .field-toggle-cb {
+        accent-color: #4fc3f7;
+        cursor: pointer;
+        flex-shrink: 0;
+        width: 14px;
+        height: 14px;
+    }
+    .field-row.qb-active {
+        background: rgba(79, 195, 247, 0.1) !important;
+        border-left: 3px solid #4fc3f7;
+    }
+    .field-row.qb-active .field-name {
+        color: #8cf;
+    }
     .field-row[draggable="true"] {
         cursor: grab;
     }
@@ -1660,16 +1675,24 @@ class SchemaViewProvider {
             vscode.postMessage({ command: 'regenAll' });
         }
 
-        // FK reference highlight on hover
+        // FK reference highlight on hover — also highlights the source field row
         document.addEventListener('mouseover', function(e) {
             const fk = e.target.closest('.fk-connector[data-ref-table]');
             if (fk) {
                 const refTable = fk.getAttribute('data-ref-table');
                 const refField = fk.getAttribute('data-ref-field');
-                const card = document.querySelector('.table-card[data-table-name="' + CSS.escape(refTable) + '"]');
+                const srcTable = fk.closest('.table-card');
+                if (srcTable) {
+                    var srcField = fk.getAttribute('data-src-field');
+                    if (srcField) {
+                        var srcRow = srcTable.querySelector('.field-row[data-field-name="' + srcField + '"]');
+                        if (srcRow) srcRow.classList.add('highlight');
+                    }
+                }
+                const card = document.querySelector('.table-card[data-table-name="' + refTable + '"]');
                 if (card) card.classList.add('highlight');
                 if (refField && card) {
-                    const row = card.querySelector('.field-row[data-field-name="' + CSS.escape(refField) + '"]');
+                    const row = card.querySelector('.field-row[data-field-name="' + refField + '"]');
                     if (row) row.classList.add('highlight');
                 }
             }
@@ -1682,10 +1705,18 @@ class SchemaViewProvider {
             if (e.relatedTarget && fk.contains(e.relatedTarget)) return;
             const refTable = fk.getAttribute('data-ref-table');
             const refField = fk.getAttribute('data-ref-field');
-            const card = document.querySelector('.table-card[data-table-name="' + CSS.escape(refTable) + '"]');
+            const srcTable = fk.closest('.table-card');
+            if (srcTable) {
+                var srcField = fk.getAttribute('data-src-field');
+                if (srcField) {
+                    var srcRow = srcTable.querySelector('.field-row[data-field-name="' + srcField + '"]');
+                    if (srcRow) srcRow.classList.remove('highlight');
+                }
+            }
+            const card = document.querySelector('.table-card[data-table-name="' + refTable + '"]');
             if (card) card.classList.remove('highlight');
             if (refField && card) {
-                const row = card.querySelector('.field-row[data-field-name="' + CSS.escape(refField) + '"]');
+                const row = card.querySelector('.field-row[data-field-name="' + refField + '"]');
                 if (row) row.classList.remove('highlight');
             }
         });
@@ -1998,14 +2029,14 @@ class SchemaViewProvider {
                 document.querySelectorAll('.gen-query-btn').forEach(b => b.disabled = true);
                 document.getElementById('saveBtn').disabled = true;
                 if (addFilterBtn) addFilterBtn.disabled = true;
-                if (previewBtn) previewBtn.disabled = true;
-                qbState.filters = [];
-                qbState.groupBy = [];
-                qbState.having = [];
+                if (previewBtn) previewBtn.disabled = true;            qbState.filters = [];
+            qbState.groupBy = [];
+            qbState.having = [];
             renderFilters();
             renderSort();
             renderGroupBy();
             renderHaving();
+            refreshFieldRowStates();
             return;
         }
 
@@ -2042,6 +2073,7 @@ class SchemaViewProvider {
             renderSort();
             renderGroupBy();
             renderHaving();
+            refreshFieldRowStates();
         }
 
         function addColumn(tableName, fieldName) {
@@ -2049,6 +2081,30 @@ class SchemaViewProvider {
             if (qbState.columns.some(c => c.table === tableName && c.field === fieldName)) return;
             qbState.columns.push({ table: tableName, field: fieldName });
             renderSelectedColumns();
+        }
+
+        function toggleFieldQuery(tableName, fieldName) {
+            var idx = qbState.columns.findIndex(function(c) {
+                return c.table === tableName && c.field === fieldName;
+            });
+            if (idx >= 0) {
+                removeColumn(idx);
+            } else {
+                addColumn(tableName, fieldName);
+            }
+        }
+
+        function refreshFieldRowStates() {
+            document.querySelectorAll('.field-row').forEach(function(row) {
+                var table = row.getAttribute('data-table-name');
+                var field = row.getAttribute('data-field-name');
+                var inQuery = qbState.columns.some(function(c) {
+                    return c.table === table && c.field === field;
+                });
+                var cb = row.querySelector('.field-toggle-cb');
+                if (cb) cb.checked = inQuery;
+                row.classList.toggle('qb-active', inQuery);
+            });
         }
 
         function removeColumn(index) {
@@ -2312,10 +2368,12 @@ class SchemaViewProvider {
         function toggleHelp(event) {
             if (event) event.stopPropagation();
             const content = document.getElementById('helpContent');
-            const arrow = document.getElementById('helpArrow');
+            const btn = document.querySelector('.help-toggle');
             const isHidden = content.classList.contains('hidden');
             content.className = 'help-content ' + (isHidden ? 'visible' : 'hidden');
-            arrow.className = 'arrow' + (isHidden ? '' : ' collapsed');
+            if (btn) {
+                btn.innerHTML = '<span class="arrow">' + (isHidden ? '\u25BC' : '\u25B6') + '</span> ' + (isHidden ? 'Hide' : 'Show');
+            }
         }
 
         function editField(tableName, fieldName, event) {
@@ -2344,7 +2402,8 @@ class SchemaViewProvider {
                 return `
                 <div class="fk-connector"
                      data-ref-table="${this._escapeHtml(f.fk.table)}"
-                     data-ref-field="${this._escapeHtml(f.fk.field)}">
+                     data-ref-field="${this._escapeHtml(f.fk.field)}"
+                     data-src-field="${safeFieldName}">
                     <span class="arrow">${this._svgArrowRight()}</span>
                     References <strong>${this._escapeHtml(f.fk.table)}(${this._escapeHtml(f.fk.field)})</strong>
                     <button class="btn btn-danger btn-sm" onclick="removeFK('${jsSafeName}', '${jsSafeField}', event)" title="Remove FK">${this._svgCloseIcon()}</button>
@@ -2395,12 +2454,12 @@ class SchemaViewProvider {
 
         return `
         <div class="field-row" draggable="true"
-             onclick="editField('${jsSafeTable}', '${jsSafeField}', event)"
-             title="Click to edit field | Drag to Query Builder"
+             onclick="toggleFieldQuery('${jsSafeTable}', '${jsSafeField}')"
+             title="Click to toggle in Query Builder | Drag to add"
              data-table-name="${this._escapeHtml(tableName)}"
              data-field-name="${safeFieldName}"
-             ondropstart="return false;"
              ondragstart="onFieldDragStart(event, '${jsSafeTable}', '${jsSafeField}')">
+            <input type="checkbox" class="field-toggle-cb" onclick="event.stopPropagation(); toggleFieldQuery('${jsSafeTable}', '${jsSafeField}')" />
             <span class="field-icon ${iconClass}">${iconSvg}</span>
             <span class="field-name">${safeFieldName}</span>
             <span class="field-type">${typeLabel}</span>
