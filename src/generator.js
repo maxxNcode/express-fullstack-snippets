@@ -1,6 +1,9 @@
+const { QueryGenerator } = require('./queryGenerator');
+
 class CodeGenerator {
     constructor(schemaRegistry) {
         this.schemaRegistry = schemaRegistry;
+        this.queryGen = new QueryGenerator(schemaRegistry);
     }
 
     getPK(tableName) {
@@ -305,18 +308,53 @@ class CodeGenerator {
         return sql;
     }
 
-    generate(snippetType, tableName) {
+    // --- Query Builder delegation to QueryGenerator ---
+    generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct) {
+        return this.queryGen.generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct);
+    }
+    generateQueryFetchJs(queryName, columns) {
+        return this.queryGen.generateQueryFetchJs(queryName, columns);
+    }
+    generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct) {
+        return this.queryGen.generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct);
+    }
+    generateQueryCardHtml(queryName, columns) {
+        return this.queryGen.generateQueryCardHtml(queryName, columns);
+    }
+    generateQueryTableHtml(queryName, columns) {
+        return this.queryGen.generateQueryTableHtml(queryName, columns);
+    }
+
+    generate(snippetType, tableNameOrQuery) {
+        // Support query snippet types: 'query-sql', 'query-js', 'query-server', etc.
+        if (snippetType.startsWith('query-')) {
+            const parts = snippetType.split('-');
+            const type = parts.slice(1).join('-');
+            const queryName = tableNameOrQuery;
+            const query = this.schemaRegistry.getQuery(queryName);
+            if (!query) return '// Query "' + queryName + '" not found';
+            const cols = query.columns;
+            switch (type) {
+                case 'sql': return this.queryGen.generateQuerySql(cols, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct);
+                case 'js': return this.queryGen.generateQueryFetchJs(queryName, cols);
+                case 'server': return this.queryGen.generateQueryServer(queryName, cols, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct);
+                case 'card': return this.queryGen.generateQueryCardHtml(queryName, cols);
+                case 'table': return this.queryGen.generateQueryTableHtml(queryName, cols);
+                default: return '// Unknown query type: ' + type;
+            }
+        }
         switch (snippetType) {
-            case 'crud': return this.generateCrud(tableName);
-            case 'list': return this.generateListHtml(tableName);
-            case 'list-js': return this.generateListJs(tableName);
-            case 'form': return this.generateFormHtml(tableName);
-            case 'form-js': return this.generateFormJs(tableName);
-            case 'page': return this.generatePageHtml(tableName);
-            case 'page-js': return this.generatePageJs(tableName);
-            default: return `// Unknown snippet type: ${snippetType}`;
+            case 'crud': return this.generateCrud(tableNameOrQuery);
+            case 'list': return this.generateListHtml(tableNameOrQuery);
+            case 'list-js': return this.generateListJs(tableNameOrQuery);
+            case 'form': return this.generateFormHtml(tableNameOrQuery);
+            case 'form-js': return this.generateFormJs(tableNameOrQuery);
+            case 'page': return this.generatePageHtml(tableNameOrQuery);
+            case 'page-js': return this.generatePageJs(tableNameOrQuery);
+            default: return '// Unknown snippet type: ' + snippetType;
         }
     }
 }
 
 module.exports = { CodeGenerator };
+

@@ -57,9 +57,8 @@ class MagicSnippetHandler {
                 const instruction = lineText.substring(prefix.length).trim();
                 if (!instruction) continue;
 
-                if (instruction.startsWith('register ')) {
-                    const spec = instruction.substring(9).trim();
-                    this.handleRegistration(event.document, njsLine, lineText, spec);
+                // Skip schema commands (register/remove/modify) — handled by extension.js
+                if (/^(register|remove|unregister|modify)\s/.test(instruction)) {
                     return;
                 }
 
@@ -79,9 +78,8 @@ class MagicSnippetHandler {
             const instruction = lineText.substring(prefix.length).trim();
             if (!instruction) return;
 
-            if (instruction.startsWith('register ')) {
-                const spec = instruction.substring(9).trim();
-                this.handleRegistration(editor.document, cursorLine, lineText, spec);
+            // Skip schema commands — handled by extension.js
+            if (/^(register|remove|unregister|modify)\s/.test(instruction)) {
                 return;
             }
 

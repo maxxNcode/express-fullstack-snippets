@@ -13,7 +13,10 @@
   "engines": {
     "vscode": "^1.74.0"
   },
-  "categories": ["Snippets", "Other"],
+  "categories": [
+    "Snippets",
+    "Other"
+  ],
   "main": "./src/extension.js",
   "activationEvents": [],
   "contributes": {
@@ -61,6 +64,14 @@
       {
         "command": "node-sqlite-ai.removeFK",
         "title": "njs: Remove Foreign Key"
+      },
+      {
+        "command": "node-sqlite-ai.openSchemaView",
+        "title": "njs: Schema Visualizer"
+      },
+      {
+        "command": "node-sqlite-ai.generateAll",
+        "title": "njs: Generate All Tables"
       }
     ],
     "keybindings": [
@@ -130,5 +141,8 @@
         "path": "./snippets/html.json"
       }
     ]
+  },
+  "dependencies": {
+    "sql.js": "^1.14.1"
   }
 }

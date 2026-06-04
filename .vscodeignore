@@ -4,6 +4,7 @@
 .opencode/**
 vsix_temp/**
 node_modules/**
+!node_modules/sql.js/**
 *.vsix
 MY-STORE-GUIDE.md
 docs/superpowers/**

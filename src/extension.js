@@ -6,6 +6,7 @@ const { SchemaRegistry } = require('./schemaRegistry');
 const { DynamicSnippetProvider } = require('./dynamicProvider');
 const { FkManager } = require('./fkManager');
 const { CodeGenerator } = require('./generator');
+const { SchemaViewProvider } = require('./schemaView');
 
 let serverManager;
 let aiClient;
@@ -13,23 +14,25 @@ let magicHandler = null;
 let schemaRegistry;
 let dynamicProvider = null;
 let fkManager;
+let schemaViewProvider;
 
 function activate(context) {
     serverManager = new ServerManager();
     aiClient = new AiClient();
 
     schemaRegistry = new SchemaRegistry();
+    schemaViewProvider = new SchemaViewProvider(context, schemaRegistry);
     let codeGenerator = null;
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
     if (workspaceRoot) {
         schemaRegistry.init(workspaceRoot).then(() => {
             codeGenerator = new CodeGenerator(schemaRegistry);
+            schemaViewProvider.setGenerator(codeGenerator);
             dynamicProvider = new DynamicSnippetProvider(schemaRegistry);
             context.subscriptions.push(
                 vscode.languages.registerCompletionItemProvider(
                     ['javascript', 'html', 'json', 'jsonc', 'typescript', 'javascriptreact', 'typescriptreact'],
-                    dynamicProvider,
-                    '-'
+                    dynamicProvider
                 )
             );
         });
@@ -333,7 +336,37 @@ function activate(context) {
         })
     );
 
-    context.subscriptions.push({ dispose: () => serverManager.stop() });
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.openSchemaView', () => {
+            schemaViewProvider.show();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.generateAll', async () => {
+            const gen = codeGenerator || new CodeGenerator(schemaRegistry);
+            const tables = schemaRegistry.getTables();
+            if (!tables.length) {
+                vscode.window.showInformationMessage('njs: No tables registered');
+                return;
+            }
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage('njs: Open a file first');
+                return;
+            }
+            const code = tables.map(t => gen.generateCreateTable(t) + '\n\n' + gen.generateCrud(t)).join('\n\n');
+            const edit = new vscode.WorkspaceEdit();
+            edit.insert(editor.document.uri, editor.selection.active, code);
+            await vscode.workspace.applyEdit(edit);
+            vscode.window.showInformationMessage(`njs: Generated code for ${tables.length} tables`);
+        })
+    );
+
+    context.subscriptions.push({ dispose: () => {
+        if (schemaViewProvider) schemaViewProvider.dispose();
+        serverManager.stop();
+    } });
 }
 
 function deactivate() {
