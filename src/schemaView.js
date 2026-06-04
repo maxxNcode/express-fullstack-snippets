@@ -110,7 +110,8 @@ class SchemaViewProvider {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                localResourceRoots: []
+                localResourceRoots: [],
+                contentSecurityPolicy: "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
             }
         );
 
@@ -943,9 +944,8 @@ class SchemaViewProvider {
     .help-toggle:hover { background: #333; color: #ddd; }
     .help-toggle .arrow { transition: transform 0.2s; display: inline-block; }
     .help-toggle .arrow.collapsed { transform: rotate(-90deg); }
-    .help-content { overflow: hidden; transition: max-height 0.3s ease; }
-    .help-content.hidden { max-height: 0; padding: 0 18px; }
-    .help-content.visible { max-height: 300px; padding: 0 18px 14px; }
+    .help-content { overflow: hidden; transition: max-height 0.3s ease, opacity 0.2s ease; max-height: 500px; opacity: 1; padding: 0 18px 14px; }
+    .help-content.hidden { max-height: 0 !important; opacity: 0 !important; padding: 0 18px !important; }
 
     /* Query Builder */
     .query-builder {
@@ -1539,7 +1539,7 @@ class SchemaViewProvider {
                 <span class="arrow" id="helpArrow">\u25BC</span> Hide
             </button>
         </div>
-        <div class="help-content visible" id="helpContent">
+        <div class="help-content" id="helpContent">
             <p style="margin-top:10px;">
                 A <strong>Foreign Key (FK)</strong> links a field in one table to the
                 <span class="pk-highlight">Primary Key (PK)</span> of another table.
@@ -1763,6 +1763,7 @@ class SchemaViewProvider {
                     '</div>';
             }).join('');
         }
+        }
 
         // --- Sort / Limit ---
         function renderSort() {
@@ -1793,8 +1794,8 @@ class SchemaViewProvider {
                 '<select class="qb-sort-col" onchange="onSortColChange(this.value)">' +
                 '<option value="">None</option>' + colOptions +
                 '</select>' +
-                '<button class="btn btn-sm sort-dir-btn' + ascActive + '" onclick="setSortDir(\'ASC\')" title="Ascending">ASC</button>' +
-                '<button class="btn btn-sm sort-dir-btn' + descActive + '" onclick="setSortDir(\'DESC\')" title="Descending">DESC</button>' +
+                '<button class="btn btn-sm sort-dir-btn' + ascActive + '" onclick="setSortDir(' + "'ASC'" + ')" title="Ascending">ASC</button>' +
+                '<button class="btn btn-sm sort-dir-btn' + descActive + '" onclick="setSortDir(' + "'DESC'" + ')" title="Descending">DESC</button>' +
                 '<label class="qb-limit-label">Limit:</label>' +
                 '<input class="qb-limit-input" type="number" min="0" step="1" placeholder="No limit" value="' + qbState.sortLimit + '" onchange="onSortLimitChange(this.value)" />' +
                 '</div>';
@@ -2369,11 +2370,9 @@ class SchemaViewProvider {
             if (event) event.stopPropagation();
             const content = document.getElementById('helpContent');
             const btn = document.querySelector('.help-toggle');
-            const isHidden = content.classList.contains('hidden');
-            content.className = 'help-content ' + (isHidden ? 'visible' : 'hidden');
-            if (btn) {
-                btn.innerHTML = '<span class="arrow">' + (isHidden ? '\u25BC' : '\u25B6') + '</span> ' + (isHidden ? 'Hide' : 'Show');
-            }
+            if (!content || !btn) return;
+            content.classList.toggle('hidden');
+            btn.innerHTML = '<span class="arrow">' + (content.classList.contains('hidden') ? '\u25B6' : '\u25BC') + '</span> ' + (content.classList.contains('hidden') ? 'Show' : 'Hide');
         }
 
         function editField(tableName, fieldName, event) {
@@ -2403,7 +2402,7 @@ class SchemaViewProvider {
                 <div class="fk-connector"
                      data-ref-table="${this._escapeHtml(f.fk.table)}"
                      data-ref-field="${this._escapeHtml(f.fk.field)}"
-                     data-src-field="${safeFieldName}">
+                     data-src-field="${this._escapeHtml(f.name)}">
                     <span class="arrow">${this._svgArrowRight()}</span>
                     References <strong>${this._escapeHtml(f.fk.table)}(${this._escapeHtml(f.fk.field)})</strong>
                     <button class="btn btn-danger btn-sm" onclick="removeFK('${jsSafeName}', '${jsSafeField}', event)" title="Remove FK">${this._svgCloseIcon()}</button>
