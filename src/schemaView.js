@@ -170,13 +170,13 @@ class SchemaViewProvider {
                         this._handleGetQueries();
                         break;
                     case 'saveQuery':
-                        await this._handleSaveQuery(msg.queryName, msg.columns, msg.filters, msg.sortBy, msg.limit, msg.groupBy, msg.having, msg.distinct);
+                        await this._handleSaveQuery(msg.queryName, msg.columns, msg.filters, msg.sortBy, msg.limit, msg.groupBy, msg.having, msg.distinct, msg.joinType);
                         break;
                     case 'generateQuery':
-                        await this._handleGenerateQuery(msg.queryName, msg.columns, msg.type, msg.filters, msg.sortBy, msg.limit, msg.groupBy, msg.having, msg.distinct);
+                        await this._handleGenerateQuery(msg.queryName, msg.columns, msg.type, msg.filters, msg.sortBy, msg.limit, msg.groupBy, msg.having, msg.distinct, msg.joinType);
                         break;
                     case 'previewQuerySql':
-                        this._handlePreviewQuerySql(msg.queryName, msg.columns, msg.filters, msg.sortBy, msg.limit, msg.groupBy, msg.having, msg.distinct);
+                        this._handlePreviewQuerySql(msg.queryName, msg.columns, msg.filters, msg.sortBy, msg.limit, msg.groupBy, msg.having, msg.distinct, msg.joinType);
                         break;
                     case 'removeQuery':
                         await this._handleRemoveQuery(msg.queryName);
@@ -497,15 +497,16 @@ class SchemaViewProvider {
                     limit: query.limit || '',
                     groupBy: query.groupBy || [],
                     having: query.having || [],
-                    distinct: !!query.distinct
+                    distinct: !!query.distinct,
+                    joinType: query.joinType || 'LEFT'
                 });
             }
         }
     }
 
-    async _handleSaveQuery(queryName, columns, filters, sortBy, limit, groupBy, having, distinct) {
+    async _handleSaveQuery(queryName, columns, filters, sortBy, limit, groupBy, having, distinct, joinType) {
         try {
-            await this.schemaRegistry.addQuery(queryName, columns, filters, sortBy, limit, groupBy, having, distinct);
+            await this.schemaRegistry.addQuery(queryName, columns, filters, sortBy, limit, groupBy, having, distinct, joinType);
             vscode.window.showInformationMessage(`njs: Query "${queryName}" saved`);
             this._refresh();
         } catch (err) {
@@ -563,11 +564,11 @@ class SchemaViewProvider {
         });
     }
 
-    _handlePreviewQuerySql(queryName, columns, filters, sortBy, limit, groupBy, having, distinct) {
+    _handlePreviewQuerySql(queryName, columns, filters, sortBy, limit, groupBy, having, distinct, joinType) {
         if (!this._panel) return;
         const gen = this.generator || new CodeGenerator(this.schemaRegistry);
         try {
-            const sql = gen.generateQuerySql(columns || [], filters || [], sortBy, limit, groupBy || [], having || [], !!distinct);
+            const sql = gen.generateQuerySql(columns || [], filters || [], sortBy, limit, groupBy || [], having || [], !!distinct, joinType);
             this._panel.webview.postMessage({
                 command: 'sqlPreviewResult',
                 sql: sql
@@ -580,7 +581,7 @@ class SchemaViewProvider {
         }
     }
 
-    async _handleGenerateQuery(queryName, columns, type, filters, sortBy, limit, groupBy, having, distinct) {
+    async _handleGenerateQuery(queryName, columns, type, filters, sortBy, limit, groupBy, having, distinct, joinType) {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             vscode.window.showErrorMessage('njs: Open a file first to insert generated code');
@@ -592,6 +593,7 @@ class SchemaViewProvider {
         const groupByArr = groupBy || [];
         const havingArr = having || [];
         const isDistinct = !!distinct;
+        const joinT = joinType || 'LEFT';
         let code = '';
 
         if (type === 'all') {
@@ -599,17 +601,17 @@ class SchemaViewProvider {
             try {
                 const existing = this.schemaRegistry.getQuery(queryName);
                 if (!existing) {
-                    await this.schemaRegistry.addQuery(queryName, columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct);
+                    await this.schemaRegistry.addQuery(queryName, columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct, joinT);
                 }
             } catch (e) {
                 // Query might already exist, ignore
             }
 
             code += `// --- ${queryName} (SQL) ---\n`;
-            code += gen.generateQuerySql(columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct);
+            code += gen.generateQuerySql(columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct, joinT);
             code += '\n\n';
             code += `// --- ${queryName} (Server Route) ---\n`;
-            code += gen.generateQueryServer(queryName, columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct);
+            code += gen.generateQueryServer(queryName, columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct, joinT);
             code += '\n\n';
             code += `// --- ${queryName} (Fetch JS) ---\n`;
             code += gen.generateQueryFetchJs(queryName, columns);
@@ -622,13 +624,13 @@ class SchemaViewProvider {
         } else {
             switch (type) {
                 case 'sql':
-                    code = gen.generateQuerySql(columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct);
+                    code = gen.generateQuerySql(columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct, joinT);
                     break;
                 case 'js':
                     code = gen.generateQueryFetchJs(queryName, columns);
                     break;
                 case 'server':
-                    code = gen.generateQueryServer(queryName, columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct);
+                    code = gen.generateQueryServer(queryName, columns, filterArr, sortBy, limit, groupByArr, havingArr, isDistinct, joinT);
                     break;
                 case 'card':
                     code = gen.generateQueryCardHtml(queryName, columns);
@@ -1722,7 +1724,7 @@ class SchemaViewProvider {
         });
 
         // --- Query Builder ---
-        const qbState = { columns: [], filters: [], sortBy: null, sortLimit: '', groupBy: [], having: [], distinct: false };
+        const qbState = { columns: [], filters: [], sortBy: null, sortLimit: '', groupBy: [], having: [], distinct: false, joinType: 'LEFT' };
 
         function onFieldDragStart(event, tableName, fieldName) {
             event.dataTransfer.setData('text/plain', JSON.stringify({ table: tableName, field: fieldName }));
@@ -1734,9 +1736,12 @@ class SchemaViewProvider {
             if (!container) return;
             schedulePreview();
 
-            if (qbState.filters.length > 0) {
+            if (qbState.filters.length === 0) {
+                container.innerHTML = '<span class="qb-no-filters">No filters — all rows included</span>';
+                return;
+            }
 
-            var ops = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'IS NULL', 'IS NOT NULL'];
+            var ops = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'BETWEEN', 'IN', 'IS NULL', 'IS NOT NULL'];
 
             container.innerHTML = qbState.filters.map(function(f, idx) {
                 // Build column dropdown with the correct 'selected' for this filter
@@ -1763,9 +1768,8 @@ class SchemaViewProvider {
                     '</div>';
             }).join('');
         }
-        }
 
-        // --- Sort / Limit ---
+        // --- Sort / Limit / Join Type ---
         function renderSort() {
             var container = document.getElementById('sortControls');
             if (!container) return;
@@ -1789,6 +1793,9 @@ class SchemaViewProvider {
             var ascActive = !qbState.sortBy || qbState.sortBy.direction !== 'DESC' ? ' sort-dir-active' : '';
             var descActive = qbState.sortBy && qbState.sortBy.direction === 'DESC' ? ' sort-dir-active' : '';
 
+            var joinLeftSel = qbState.joinType !== 'INNER' ? ' selected' : '';
+            var joinInnerSel = qbState.joinType === 'INNER' ? ' selected' : '';
+
             container.innerHTML = '<span class="qb-filter-label">Sort &amp; Limit:</span>' +
                 '<div class="qb-sort-row">' +
                 '<select class="qb-sort-col" onchange="onSortColChange(this.value)">' +
@@ -1798,7 +1805,17 @@ class SchemaViewProvider {
                 '<button class="btn btn-sm sort-dir-btn' + descActive + '" onclick="setSortDir(' + "'DESC'" + ')" title="Descending">DESC</button>' +
                 '<label class="qb-limit-label">Limit:</label>' +
                 '<input class="qb-limit-input" type="number" min="0" step="1" placeholder="No limit" value="' + qbState.sortLimit + '" onchange="onSortLimitChange(this.value)" />' +
+                '<label class="qb-limit-label" style="margin-left:12px;">Join:</label>' +
+                '<select class="qb-sort-col" onchange="onJoinTypeChange(this.value)" style="min-width:100px;">' +
+                '<option value="LEFT"' + joinLeftSel + '>LEFT JOIN</option>' +
+                '<option value="INNER"' + joinInnerSel + '>INNER JOIN</option>' +
+                '</select>' +
                 '</div>';
+        }
+
+        function onJoinTypeChange(val) {
+            qbState.joinType = val;
+            schedulePreview();
         }
 
         function onSortColChange(val) {
@@ -1852,7 +1869,8 @@ class SchemaViewProvider {
                 limit: qbState.sortLimit,
                 groupBy: qbState.groupBy,
                 having: qbState.having,
-                distinct: qbState.distinct
+                distinct: qbState.distinct,
+                joinType: qbState.joinType
             });
         }
 
@@ -1920,7 +1938,7 @@ class SchemaViewProvider {
                 return;
             }
 
-            var ops = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'IS NULL', 'IS NOT NULL'];
+            var ops = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'BETWEEN', 'IN', 'IS NULL', 'IS NOT NULL'];
             var aggrFunctions = ['', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
 
             container.innerHTML = qbState.having.map(function(h, idx) {
@@ -2084,6 +2102,19 @@ class SchemaViewProvider {
             renderSelectedColumns();
         }
 
+        function selectAllFields(tableName, event) {
+            if (event) event.stopPropagation();
+            // Find all field rows for this table and add each field
+            var rows = document.querySelectorAll('.field-row[data-table-name="' + tableName + '"]');
+            rows.forEach(function(row) {
+                var field = row.getAttribute('data-field-name');
+                if (!field) return;
+                if (qbState.columns.some(function(c) { return c.table === tableName && c.field === field; })) return;
+                qbState.columns.push({ table: tableName, field: field });
+            });
+            renderSelectedColumns();
+        }
+
         function toggleFieldQuery(tableName, fieldName) {
             var idx = qbState.columns.findIndex(function(c) {
                 return c.table === tableName && c.field === fieldName;
@@ -2138,6 +2169,7 @@ class SchemaViewProvider {
             qbState.groupBy = [];
             qbState.having = [];
             qbState.distinct = false;
+            qbState.joinType = 'LEFT';
             document.getElementById('queryName').value = '';
             // Uncheck the DISTINCT toggle visually
             var dt = document.querySelector('.qb-distinct-toggle input');
@@ -2221,9 +2253,10 @@ class SchemaViewProvider {
                 qbState.groupBy = msg.groupBy || [];
                 qbState.having = msg.having || [];
                 qbState.distinct = !!msg.distinct;
+                qbState.joinType = msg.joinType || 'LEFT';
                 document.getElementById('queryName').value = msg.queryName || '';
                 // Sync the DISTINCT checkbox
-                var dt = document.querySelector('.qb-distinct-toggle input');
+                    var dt = document.querySelector('.qb-distinct-toggle input');
                 if (dt) dt.checked = qbState.distinct;
                 renderSelectedColumns();
                 renderSort();
@@ -2295,7 +2328,8 @@ class SchemaViewProvider {
                 limit: qbState.sortLimit,
                 groupBy: qbState.groupBy,
                 having: qbState.having,
-                distinct: qbState.distinct
+                distinct: qbState.distinct,
+                joinType: qbState.joinType
             });
         }
 
@@ -2312,6 +2346,7 @@ class SchemaViewProvider {
                 groupBy: qbState.groupBy,
                 having: qbState.having,
                 distinct: qbState.distinct,
+                joinType: qbState.joinType,
                 type: type || 'all'
             });
         }
@@ -2414,6 +2449,7 @@ class SchemaViewProvider {
             <div class="table-card-header">
                 <h3>${safeName}</h3>
                 <div class="table-actions">
+                    <button class="btn btn-info btn-sm" onclick="selectAllFields('${jsSafeName}', event)" title="Add all fields to Query Builder">All</button>
                     <button class="btn btn-info btn-sm" onclick="previewSql('${jsSafeName}', event)" title="Preview SQL">SQL</button>
                     <button class="btn btn-success btn-sm" onclick="generateTable('${jsSafeName}', event)" title="Generate code">${this._svgGenerateIcon()}</button>
                     <button class="btn btn-danger btn-sm" onclick="removeTable('${jsSafeName}', event)" title="Remove table">${this._svgCloseIcon()}</button>

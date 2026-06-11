@@ -59,6 +59,21 @@ function activate(context) {
                 const registerMatch = instruction.match(/^register\s+(.+)/);
                 if (registerMatch) {
                     const spec = registerMatch[1].trim();
+                    // Check if this is a backtick-wrapped CREATE TABLE: njs:register(`CREATE TABLE...`)
+                    if (spec.startsWith('`') && /CREATE\s+TABLE/i.test(spec)) {
+                        try {
+                            const { tableName, fields } = schemaRegistry.parseCreateTable(spec);
+                            await schemaRegistry.addTable(tableName, fields);
+                            vscode.window.showInformationMessage(`njs: Table "${tableName}" registered from SQL`);
+                            const edit = new vscode.WorkspaceEdit();
+                            const range = new vscode.Range(lineNum, 0, lineNum, lineText.length);
+                            edit.replace(event.document.uri, range, `// Table "${tableName}" registered from SQL`);
+                            await vscode.workspace.applyEdit(edit);
+                        } catch (err) {
+                            vscode.window.showErrorMessage(`njs: ${err.message}`);
+                        }
+                        return;
+                    }
                     try {
                         const { tableName, fields } = schemaRegistry.parseInlineSpec(spec);
                         await schemaRegistry.addTable(tableName, fields);
@@ -297,6 +312,61 @@ function activate(context) {
                 await schemaRegistry.removeTable(pick.label);
                 await schemaRegistry.addTable(pick.label, fields);
                 vscode.window.showInformationMessage(`njs: Table "${pick.label}" modified (${fields.length} fields)`);
+            } catch (err) {
+                vscode.window.showErrorMessage(`njs: ${err.message}`);
+            }
+        })
+    );
+
+    // New command: Register from selected CREATE TABLE SQL
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.registerFromSql', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage('njs: Open a file first');
+                return;
+            }
+
+            let sqlText = '';
+            if (!editor.selection.isEmpty) {
+                sqlText = editor.document.getText(editor.selection).trim();
+            }
+
+            if (!sqlText) {
+                // Try to find full multi-line CREATE TABLE near cursor
+                for (let line = editor.selection.active.line; line >= 0; line--) {
+                    const text = editor.document.lineAt(line).text;
+                    if (/^CREATE\s+TABLE/i.test(text.trim())) {
+                        // Found the opening line — collect lines down to the closing paren
+                        const lines = [text];
+                        for (let l = line + 1; l < editor.document.lineCount; l++) {
+                            const nextLine = editor.document.lineAt(l).text;
+                            lines.push(nextLine);
+                            if (nextLine.trim().endsWith(')') || nextLine.trim().endsWith(');')) {
+                                break;
+                            }
+                        }
+                        sqlText = lines.join('\n').trim();
+                        break;
+                    }
+                }
+            }
+
+            if (!sqlText) {
+                vscode.window.showErrorMessage('njs: Select a CREATE TABLE block or place cursor on one');
+                return;
+            }
+
+            // Strip outer njs:register(`...`) wrapper if present
+            const registerWrapMatch = sqlText.match(/register\s*\(\s*`([^`]*)`\s*\)/);
+            if (registerWrapMatch) {
+                sqlText = registerWrapMatch[1].trim();
+            }
+
+            try {
+                const { tableName, fields } = schemaRegistry.parseCreateTable(sqlText);
+                await schemaRegistry.addTable(tableName, fields);
+                vscode.window.showInformationMessage(`njs: Table "${tableName}" registered from SQL`);
             } catch (err) {
                 vscode.window.showErrorMessage(`njs: ${err.message}`);
             }

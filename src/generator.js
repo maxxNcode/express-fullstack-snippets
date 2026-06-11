@@ -309,14 +309,14 @@ class CodeGenerator {
     }
 
     // --- Query Builder delegation to QueryGenerator ---
-    generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct) {
-        return this.queryGen.generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct);
+    generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct, joinType) {
+        return this.queryGen.generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct, joinType);
     }
     generateQueryFetchJs(queryName, columns) {
         return this.queryGen.generateQueryFetchJs(queryName, columns);
     }
-    generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct) {
-        return this.queryGen.generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct);
+    generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct, joinType) {
+        return this.queryGen.generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct, joinType);
     }
     generateQueryCardHtml(queryName, columns) {
         return this.queryGen.generateQueryCardHtml(queryName, columns);
@@ -335,9 +335,9 @@ class CodeGenerator {
             if (!query) return '// Query "' + queryName + '" not found';
             const cols = query.columns;
             switch (type) {
-                case 'sql': return this.queryGen.generateQuerySql(cols, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct);
+                case 'sql': return this.queryGen.generateQuerySql(cols, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
                 case 'js': return this.queryGen.generateQueryFetchJs(queryName, cols);
-                case 'server': return this.queryGen.generateQueryServer(queryName, cols, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct);
+                case 'server': return this.queryGen.generateQueryServer(queryName, cols, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
                 case 'card': return this.queryGen.generateQueryCardHtml(queryName, cols);
                 case 'table': return this.queryGen.generateQueryTableHtml(queryName, cols);
                 default: return '// Unknown query type: ' + type;

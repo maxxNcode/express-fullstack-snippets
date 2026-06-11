@@ -12,7 +12,7 @@ class QueryGenerator {
      * @param {Array} columns - Array of { table, field } objects
      * @param {Array} [filters] - Optional array of { table, field, operator, value } filter objects
      */
-    generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct) {
+    generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct, joinType) {
         if (!columns || columns.length === 0) return '-- No columns selected';
         const tableColumns = {};
         for (const col of columns) {
@@ -20,7 +20,8 @@ class QueryGenerator {
             tableColumns[col.table].push(col);
         }
         const tableNames = Object.keys(tableColumns);
-        const { mainTable, joins } = this._determineQueryJoins(tableNames);
+        const joinT = (joinType === 'INNER' ? 'INNER' : 'LEFT');
+        const { mainTable, joins } = this._determineQueryJoins(tableNames, joinT);
         const selectParts = [];
         for (const col of columns) {
             var colExpr = col.table + '.' + col.field;
@@ -50,7 +51,16 @@ class QueryGenerator {
                 } else if (op.toUpperCase() === 'LIKE') {
                     whereClauses.push(colRef + ' LIKE ' + this._quoteSqlValue(f.value));
                 } else if (op.toUpperCase() === 'IN') {
-                    whereClauses.push(colRef + ' IN (' + this._quoteSqlValue(f.value) + ')');
+                    var inVals = String(f.value).split(',').map(function(v) { return v.trim(); }).filter(Boolean);
+                    var inQuoted = inVals.map(function(v) { return this._quoteSqlValue(v); }, this).join(', ');
+                    whereClauses.push(colRef + ' IN (' + inQuoted + ')');
+                } else if (op.toUpperCase() === 'BETWEEN') {
+                    var btwnVals = String(f.value).split(/\s+AND\s+/i).map(function(v) { return v.trim(); }).filter(Boolean);
+                    if (btwnVals.length >= 2) {
+                        whereClauses.push(colRef + ' BETWEEN ' + this._quoteSqlValue(btwnVals[0]) + ' AND ' + this._quoteSqlValue(btwnVals[1]));
+                    } else {
+                        whereClauses.push(colRef + ' BETWEEN ' + this._quoteSqlValue(f.value) + ' AND ' + this._quoteSqlValue(''));
+                    }
                 } else {
                     whereClauses.push(colRef + ' ' + op + ' ' + this._quoteSqlValue(f.value));
                 }
@@ -82,6 +92,17 @@ class QueryGenerator {
                     havingClauses.push(hColRef + ' IS NOT NULL');
                 } else if (hOp.toUpperCase() === 'LIKE') {
                     havingClauses.push(hColRef + ' LIKE ' + this._quoteSqlValue(h.value));
+                } else if (hOp.toUpperCase() === 'IN') {
+                    var hInVals = String(h.value).split(',').map(function(v) { return v.trim(); }).filter(Boolean);
+                    var hInQuoted = hInVals.map(function(v) { return this._quoteSqlValue(v); }, this).join(', ');
+                    havingClauses.push(hColRef + ' IN (' + hInQuoted + ')');
+                } else if (hOp.toUpperCase() === 'BETWEEN') {
+                    var hBtwnVals = String(h.value).split(/\s+AND\s+/i).map(function(v) { return v.trim(); }).filter(Boolean);
+                    if (hBtwnVals.length >= 2) {
+                        havingClauses.push(hColRef + ' BETWEEN ' + this._quoteSqlValue(hBtwnVals[0]) + ' AND ' + this._quoteSqlValue(hBtwnVals[1]));
+                    } else {
+                        havingClauses.push(hColRef + ' BETWEEN ' + this._quoteSqlValue(h.value) + ' AND ' + this._quoteSqlValue(''));
+                    }
                 } else {
                     havingClauses.push(hColRef + ' ' + hOp + ' ' + this._quoteSqlValue(h.value));
                 }
@@ -96,6 +117,7 @@ class QueryGenerator {
         if (limit && parseInt(limit) > 0) {
             sql += '\nLIMIT ' + parseInt(limit);
         }
+        sql += ';';
         return sql;
     }
 
@@ -112,7 +134,8 @@ class QueryGenerator {
     /**
      * Determine JOINs between selected tables using FK relationships.
      */
-    _determineQueryJoins(tableNames) {
+    _determineQueryJoins(tableNames, joinType) {
+        joinType = joinType || 'LEFT';
         const tableObjs = tableNames.map(t => ({ name: t, table: this.schemaRegistry.getTable(t) })).filter(t => t.table);
         const outgoingFKs = {};
         for (const tObj of tableObjs) {
@@ -150,14 +173,14 @@ class QueryGenerator {
             const currentTable = queue.shift();
             for (const fk of (outgoingFKs[currentTable] || [])) {
                 if (!joinedTables.has(fk.targetTable)) {
-                    joins.push('LEFT JOIN ' + fk.targetTable + ' ON ' + currentTable + '.' + fk.fromField + ' = ' + fk.targetTable + '.' + fk.targetField);
+                    joins.push(joinType + ' JOIN ' + fk.targetTable + ' ON ' + currentTable + '.' + fk.fromField + ' = ' + fk.targetTable + '.' + fk.targetField);
                     joinedTables.add(fk.targetTable);
                     queue.push(fk.targetTable);
                 }
             }
             for (const fk of (incomingFKs[currentTable] || [])) {
                 if (!joinedTables.has(fk.fromTable)) {
-                    joins.push('LEFT JOIN ' + fk.fromTable + ' ON ' + currentTable + '.' + fk.targetField + ' = ' + fk.fromTable + '.' + fk.fromField);
+                    joins.push(joinType + ' JOIN ' + fk.fromTable + ' ON ' + currentTable + '.' + fk.targetField + ' = ' + fk.fromTable + '.' + fk.fromField);
                     joinedTables.add(fk.fromTable);
                     queue.push(fk.fromTable);
                 }
@@ -191,9 +214,9 @@ class QueryGenerator {
     /**
      * Generate Express server route for a query.
      */
-    generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct) {
+    generateQueryServer(queryName, columns, filters, sortBy, limit, groupBy, having, distinct, joinType) {
         const route = '/api/' + queryName;
-        const sql = this.generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct);
+        const sql = this.generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct, joinType);
         const stmtName = 'stmt' + queryName.charAt(0).toUpperCase() + queryName.slice(1);
         let server = '// --- ' + queryName + ' ---\n';
         var escapedSql = sql.replace(/'/g, "''").replace(/\n/g, '\\n');

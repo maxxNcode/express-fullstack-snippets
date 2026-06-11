@@ -145,6 +145,7 @@ const coursesPK  = { name: 'courseID',  type: 'INTEGER', pk: true };
   const cols = [{ table: 'Students', field: 'name' }];
   const sql = gen(reg, cols, null, null, '10');
   assert(sql.includes('LIMIT 10'), 'LIMIT 10');
+  assert(sql.endsWith(';'), 'ends with semicolon');
   console.log('PASS: LIMIT');
 }
 
@@ -339,6 +340,7 @@ const coursesPK  = { name: 'courseID',  type: 'INTEGER', pk: true };
   assert(sql.includes('HAVING COUNT(Enrollments.courseID) > 3'), 'combined: HAVING aggregate');
   assert(sql.includes('ORDER BY Enrollments.studentID DESC'), 'combined: ORDER BY DESC');
   assert(sql.includes('LIMIT 50'),                      'combined: LIMIT');
+  assert(sql.endsWith(';'),                             'combined: ends with semicolon');
 
   // Clause order check
   const selectPos = sql.indexOf('SELECT');
@@ -451,8 +453,8 @@ const coursesPK  = { name: 'courseID',  type: 'INTEGER', pk: true };
     { op: 'LIKE',     val: '%test%',  expected: "LIKE '%test%'" },
     { op: 'IS NULL',  val: '',        expected: 'IS NULL' },
     { op: 'IS NOT NULL', val: '',     expected: 'IS NOT NULL' },
-    // IN — note: _quoteSqlValue wraps the whole value in quotes
-    { op: 'IN',        val: '1,2,3',  expected: "IN ('1,2,3')" },
+    // IN — fixed: splits by comma and quotes each value individually
+    { op: 'IN',        val: '1,2,3',  expected: 'IN (1, 2, 3)' },
   ];
 
   for (const { op, val, expected } of allOps) {
@@ -461,6 +463,35 @@ const coursesPK  = { name: 'courseID',  type: 'INTEGER', pk: true };
     assert(sql.includes(expected), `filter operator ${op} -> ${expected}`);
   }
   console.log('PASS: all filter operator types');
+}
+
+// --- 22b. BETWEEN operator ---
+
+{
+  const reg = createMockRegistry({
+    Items: { fields: [{ name: 'price', type: 'REAL' }] }
+  });
+  const cols = [{ table: 'Items', field: 'price' }];
+
+  const filters = [{ table: 'Items', field: 'price', operator: 'BETWEEN', value: '10 AND 20' }];
+  const sql = gen(reg, cols, filters);
+  assert(sql.includes('Items.price BETWEEN'), 'BETWEEN keyword');
+  assert(sql.includes('10 AND 20'), 'BETWEEN values');
+  console.log('PASS: BETWEEN operator');
+}
+
+// --- 22c. IN operator with string values ---
+
+{
+  const reg = createMockRegistry({
+    Items: { fields: [{ name: 'status', type: 'TEXT' }] }
+  });
+  const cols = [{ table: 'Items', field: 'status' }];
+
+  const filters = [{ table: 'Items', field: 'status', operator: 'IN', value: 'active, pending' }];
+  const sql = gen(reg, cols, filters);
+  assert(sql.includes("IN ('active', 'pending')"), 'IN with quoted strings');
+  console.log('PASS: IN operator with string values');
 }
 
 // --- 23. SQL value quoting ---
@@ -510,6 +541,30 @@ const coursesPK  = { name: 'courseID',  type: 'INTEGER', pk: true };
   console.log('PASS: FK-based JOIN detection');
 }
 
+// --- 24b. INNER JOIN via joinType parameter ---
+
+{
+  const reg = createMockRegistry({
+    Enrollments: { fields: [
+      { name: 'enrollmentID', type: 'INTEGER', pk: true },
+      { name: 'courseID', type: 'INTEGER', fk: { table: 'Courses', field: 'courseID' } }
+    ]},
+    Courses: { fields: [
+      { name: 'courseID', type: 'INTEGER', pk: true },
+      { name: 'courseCode', type: 'TEXT' }
+    ]}
+  });
+  const cols = [
+    { table: 'Enrollments', field: 'enrollmentID' },
+    { table: 'Courses', field: 'courseCode' }
+  ];
+  const qg = new QueryGenerator(reg);
+  const sql = qg.generateQuerySql(cols, null, null, null, null, null, null, 'INNER');
+  assert(sql.includes('INNER JOIN Courses'), 'INNER JOIN when specified');
+  assert(!sql.includes('LEFT JOIN'), 'no LEFT JOIN when INNER specified');
+  console.log('PASS: INNER JOIN via joinType parameter');
+}
+
 // --- 25. Multiple tables without FK (CROSS JOIN) ---
 
 {
@@ -529,6 +584,44 @@ const coursesPK  = { name: 'courseID',  type: 'INTEGER', pk: true };
 // -------------------------------------------------------------------
 // Summary
 // -------------------------------------------------------------------
+// --- 26. Basic SELECT ends with semicolon ---
+
+{
+  const reg = createMockRegistry({
+    Items: { fields: [{ name: 'name', type: 'TEXT' }] }
+  });
+  const cols = [{ table: 'Items', field: 'name' }];
+  const sql = gen(reg, cols);
+  assert(sql.endsWith(';'), 'basic SELECT ends with ;');
+  console.log('PASS: basic SELECT ends with semicolon');
+}
+
+// --- 27. SELECT * from allFields helper (selectAllFields concept) ---
+
+{
+  const reg = createMockRegistry({
+    Students: { fields: [
+      { name: 'studentID', type: 'INTEGER', pk: true },
+      { name: 'name', type: 'TEXT' },
+      { name: 'email', type: 'TEXT' }
+    ]}
+  });
+  // Simulate what selectAllFields does: add all fields
+  const table = reg.getTable('Students');
+  const cols = table.fields.map(function(f) { return { table: 'Students', field: f.name }; });
+  const sql = gen(reg, cols);
+  assert(sql.includes('Students.studentID'), 'all fields: studentID');
+  assert(sql.includes('Students.name'), 'all fields: name');
+  assert(sql.includes('Students.email'), 'all fields: email');
+  assert(sql.includes('Students_studentID'), 'all fields alias: studentID');
+  assert(sql.includes('Students_name'), 'all fields alias: name');
+  assert(sql.includes('Students_email'), 'all fields alias: email');
+  console.log('PASS: SELECT all fields (selectAllFields concept)');
+}
+
+// -------------------------------------------------------------------
+// Summary
+// -------------------------------------------------------------------
 console.log('\n' + '='.repeat(50));
-console.log('All 27 test groups PASSED');
+console.log('All 31 test groups PASSED');
 console.log('='.repeat(50));

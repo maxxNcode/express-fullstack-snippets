@@ -54,6 +54,10 @@
         "title": "njs: Modify Table Fields"
       },
       {
+        "command": "node-sqlite-ai.registerFromSql",
+        "title": "njs: Register this table"
+      },
+      {
         "command": "node-sqlite-ai.showStatus",
         "title": "njs: Schema Status"
       },
