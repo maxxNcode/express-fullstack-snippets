@@ -1,14 +1,14 @@
 {
   "name": "node-sqlite-snippets",
   "displayName": "Node SQLite Server Snippets",
-  "description": "Schema-aware dynamic code generator for Express SQLite apps. Register any table schema, then generate CRUD routes + HTML + JS with one snippet.",
-  "version": "2.0.0",
+  "description": "🚀 The ultimate VS Code extension for Express + SQLite full-stack development. Includes 45+ schema-aware njs-snippets for CRUD, Auth, Security, Frontend & an offline AI code assistant (GGUF models).",
+  "version": "3.0.0",
   "publisher": "maxxNcode",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/node-sqlite-snippets.git"
+    "url": "https://github.com/maxxNcode/express-fullstack-snippets.git"
   },
   "engines": {
     "vscode": "^1.74.0"
