@@ -189,6 +189,73 @@ class AuthGenerator {
     }
 
     /**
+     * Generate register form HTML with all fields and JS fetch handler.
+     */
+    generateRegisterFormHtml(tableName, passwordField, options = {}) {
+        const table = this.schemaRegistry.getTable(tableName);
+        if (!table) return '<!-- Table not found -->';
+
+        const displayName = tableName.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+        const pk = this._getPK(tableName);
+        const allFields = table.fields;
+
+        const inputs = allFields.map(f => {
+            const label = f.name.replace(/_/g, ' ');
+            const labelCap = label.charAt(0).toUpperCase() + label.slice(1);
+            const required = f.notNull ? ' required' : '';
+
+            if (f.name === passwordField) {
+                return `    <input type="password" name="${f.name}" placeholder="${labelCap}" required />`;
+            }
+            if (f.pk && f.type === 'INTEGER') return ''; // autoincrement PK
+            if (f.fk) {
+                return `    <select name="${f.name}"${required}>\n        <option value="">Select ${f.fk.table}</option>\n    </select>`;
+            }
+            if (f.type === 'REAL' || f.type === 'INTEGER') {
+                return `    <input type="number" name="${f.name}" placeholder="${labelCap}"${required} />`;
+            }
+            return `    <input type="text" name="${f.name}" placeholder="${labelCap}"${required} />`;
+        }).filter(Boolean).join('\n');
+
+        let html = '';
+        html += '<!-- --- Auth: Register Form --- -->\n';
+        html += `<div id="registerContainer" class="auth-container">\n`;
+        html += `  <h2>${displayName} Register</h2>\n`;
+        html += `  <form id="registerForm" onsubmit="return handleRegister(event)">\n`;
+        html += inputs;
+        html += `    <button type="submit">Register</button>\n`;
+        html += `    <p id="registerError" class="error-message" style="display:none;color:#f55;"></p>\n`;
+        html += `  </form>\n`;
+        html += `  <p>Already registered? <a href="/login.html">Log in</a></p>\n`;
+        html += '</div>\n\n';
+
+        html += '<script>\n';
+        html += 'async function handleRegister(e) {\n';
+        html += '  e.preventDefault();\n';
+        html += '  const form = e.target;\n';
+        html += '  const data = Object.fromEntries(new FormData(form));\n';
+        html += "  const errorEl = document.getElementById('registerError');\n";
+        html += '  try {\n';
+        html += "    const res = await fetch('/api/auth/register', {\n";
+        html += "      method: 'POST',\n";
+        html += "      headers: { 'Content-Type': 'application/json' },\n";
+        html += "      body: JSON.stringify(data)\n";
+        html += "    });\n";
+        html += '    const result = await res.json();\n';
+        html += "    if (!res.ok) { errorEl.textContent = result.error; errorEl.style.display = 'block'; return false; }\n";
+        html += '    window.location.href = \'/login.html\';\n';
+        html += '  } catch (err) {\n';
+        html += "    errorEl.textContent = 'Connection error';\n";
+        html += "    errorEl.style.display = 'block';\n";
+        html += '  }\n';
+        html += '  return false;\n';
+        html += '}\n';
+        html += '</script>\n';
+
+        return html;
+    }
+
+    /**
      * Get the PK of a table.
      */
     _getPK(tableName) {

@@ -958,7 +958,8 @@
             var hasRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : false;
             var hasRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
             var hasHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : false;
-            var enabled = authState.table && hasIdentity && hasPassword && (hasRoute || hasRegister || hasHtml);
+            var hasRegisterHtml = document.getElementById('authOptRegisterHtml') ? document.getElementById('authOptRegisterHtml').checked : false;
+            var enabled = authState.table && hasIdentity && hasPassword && (hasRoute || hasRegister || hasHtml || hasRegisterHtml);
             var genBtn = document.getElementById('authGenBtn');
             var prevBtn = document.getElementById('authPrevBtn');
             if (genBtn) genBtn.disabled = !enabled;
@@ -970,6 +971,7 @@
             var genRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : true;
             var genRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
             var genHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : true;
+            var genRegisterHtml = document.getElementById('authOptRegisterHtml') ? document.getElementById('authOptRegisterHtml').checked : false;
             var useJwt = document.getElementById('authOptJwt') ? document.getElementById('authOptJwt').checked : true;
             var useBcrypt = document.getElementById('authOptBcrypt') ? document.getElementById('authOptBcrypt').checked : true;
             vscode.postMessage({
@@ -983,7 +985,8 @@
                     useBcrypt: useBcrypt,
                     generateRoute: genRoute,
                     generateRegister: genRegister,
-                    generateHtml: genHtml
+                    generateHtml: genHtml,
+                    generateRegisterHtml: genRegisterHtml
                 }
             });
         }

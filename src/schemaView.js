@@ -586,6 +586,12 @@ class SchemaViewProvider {
             allCode += authGen.generateLoginFormHtml(tableName, identityFields, passwordField, opts);
             allCode += '\n\n';
         }
+        if (opts.generateRegisterHtml) {
+            const table = this.schemaRegistry.getTable(tableName);
+            const allFields = table ? table.fields.map(f => f.name) : [];
+            allCode += authGen.generateRegisterFormHtml(tableName, passwordField, opts);
+            allCode += '\n\n';
+        }
         if (!allCode) {
             allCode = '// Auth: Select at least one output option (route, register, or HTML)';
         }
@@ -1032,6 +1038,10 @@ class SchemaViewProvider {
                     <label class="qb-groupby-cb" style="color:#888;">
                         <input type="checkbox" onchange="onAuthOptionChange()" id="authOptRegister" />
                         <span>Register route (server)</span>
+                    </label>
+                    <label class="qb-groupby-cb" style="color:#888;">
+                        <input type="checkbox" onchange="onAuthOptionChange()" id="authOptRegisterHtml" />
+                        <span>Register form HTML</span>
                     </label>
                     <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
                         <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptHtml" />
