@@ -858,6 +858,16 @@
             updateAuthGenBtn();
         }
 
+        function onAuthPasswordChange(val) {
+            authState.passwordField = val || null;
+            updateAuthGenBtn();
+        }
+
+        function onAuthStatusChange(val) {
+            authState.statusField = val || null;
+            updateAuthGenBtn();
+        }
+
         function toggleAuthIdentityField(fieldName, checked) {
             if (checked) {
                 if (authState.identityFields.indexOf(fieldName) < 0) {

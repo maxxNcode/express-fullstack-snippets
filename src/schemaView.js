@@ -99,7 +99,8 @@ class SchemaViewProvider {
 
         if (this._panel) {
             this._panel.reveal(column);
-            this._refresh();
+            // Don't call _refresh() here — it destroys and recreates the entire HTML,
+            // wiping all client-side state (auth selections, query builder, etc.)
             return;
         }
 
@@ -1006,14 +1007,14 @@ class SchemaViewProvider {
 
             <div class="auth-section" id="authPasswordSection" style="opacity:0.4;pointer-events:none;">
                 <label>Step 3: Password field</label>
-                <select id="authPasswordSelect">
+                <select id="authPasswordSelect" onchange="onAuthPasswordChange(this.value)">
                     <option value="">— Select password field —</option>
                 </select>
             </div>
 
             <div class="auth-section" id="authStatusSection" style="opacity:0.4;pointer-events:none;">
                 <label>Step 4: Status field (optional — for active/inactive check)</label>
-                <select id="authStatusSelect">
+                <select id="authStatusSelect" onchange="onAuthStatusChange(this.value)">
                     <option value="">— None (skip status check) —</option>
                 </select>
                 <div class="auth-info">If selected, login will reject accounts where this field is not 'active'.</div>
