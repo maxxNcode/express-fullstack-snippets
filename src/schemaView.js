@@ -554,6 +554,7 @@ class SchemaViewProvider {
         const suggestedStatus = authGen.detectStatusField(table);
         this._panel.webview.postMessage({
             command: 'authFieldsReceived',
+            tableName: tableName,
             table: { fields: table.fields },
             suggestedIdentity: suggestedIdentity,
             suggestedPassword: suggestedPassword,

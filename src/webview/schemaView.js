@@ -627,11 +627,43 @@
                 if (ta) ta.value = msg.sql || '-- No SQL generated';
             } else if (msg.command === 'authFieldsReceived') {
                 renderAuthFields(msg.table, msg.suggestedIdentity || [], msg.suggestedPassword || null, msg.suggestedStatus || null);
+                // Apply any saved state overrides (e.g. after webview re-creation)
+                var saved = vscode.getState();
+                if (saved && saved.authTable === msg.tableName) {
+                    // Restore identity field checkboxes
+                    if (saved.authIdentityFields && saved.authIdentityFields.length > 0) {
+                        authState.identityFields = saved.authIdentityFields.slice();
+                        document.querySelectorAll('#authIdentityFields input[type="checkbox"]').forEach(function(cb) {
+                            var match = cb.getAttribute('onchange').match(/toggleAuthIdentityField\('([^']+)'/);
+                            if (match) {
+                                var fieldName = match[1];
+                                var shouldCheck = saved.authIdentityFields.indexOf(fieldName) >= 0;
+                                cb.checked = shouldCheck;
+                                var label = cb.closest('.auth-field-cb');
+                                if (label) label.classList.toggle('checked', shouldCheck);
+                            }
+                        });
+                    }
+                    // Restore password field selection
+                    if (saved.authPasswordField) {
+                        authState.passwordField = saved.authPasswordField;
+                        var pwSelect = document.getElementById('authPasswordSelect');
+                        if (pwSelect) pwSelect.value = saved.authPasswordField;
+                    }
+                    // Restore status field selection
+                    authState.statusField = saved.authStatusField || null;
+                    var statSelect = document.getElementById('authStatusSelect');
+                    if (statSelect) statSelect.value = saved.authStatusField || '';
+                    updateAuthGenBtn();
+                }
             } else if (msg.command === 'authPreviewResult') {
                 var authTa = document.getElementById('authPreview');
                 if (authTa) authTa.value = msg.code || '// No code generated';
             }
         });
+
+        // On load: restore any saved auth state from previous webview session
+        restoreAuthState();
 
         // Drop zone handlers
         document.addEventListener('DOMContentLoaded', function() {
@@ -785,13 +817,37 @@
         // --- Auth Generator ---
         var authState = { table: null, identityFields: [], passwordField: null, statusField: null };
 
+        function saveAuthState() {
+            vscode.setState({
+                authTable: authState.table,
+                authIdentityFields: authState.identityFields,
+                authPasswordField: authState.passwordField,
+                authStatusField: authState.statusField
+            });
+        }
+
+        function restoreAuthState() {
+            var saved = vscode.getState();
+            if (saved && saved.authTable) {
+                authState.table = saved.authTable;
+                authState.identityFields = saved.authIdentityFields || [];
+                authState.passwordField = saved.authPasswordField || null;
+                authState.statusField = saved.authStatusField || null;
+                // Fetch fields from extension — the message listener's override logic
+                // will re-apply saved identity/password/status selections over auto-detected defaults
+                vscode.postMessage({ command: 'getAuthTableFields', tableName: saved.authTable });
+            }
+        }
+
         function onAuthTableChange(tableName) {
             if (!tableName) {
                 disableAuthSections();
                 authState.table = null;
+                saveAuthState();
                 return;
             }
             authState.table = tableName;
+            // Don't clear identity/password/status here — wait for extension response
             vscode.postMessage({ command: 'getAuthTableFields', tableName: tableName });
         }
 
@@ -860,11 +916,13 @@
 
         function onAuthPasswordChange(val) {
             authState.passwordField = val || null;
+            saveAuthState();
             updateAuthGenBtn();
         }
 
         function onAuthStatusChange(val) {
             authState.statusField = val || null;
+            saveAuthState();
             updateAuthGenBtn();
         }
 
@@ -886,6 +944,7 @@
                 }
                 lbl.classList.toggle('checked', authState.identityFields.indexOf(name) >= 0);
             });
+            saveAuthState();
             updateAuthGenBtn();
         }
 
@@ -954,6 +1013,7 @@
             authState.identityFields = [];
             authState.passwordField = null;
             authState.statusField = null;
+            saveAuthState();
         }
 
         function copyAuthPreview() {
