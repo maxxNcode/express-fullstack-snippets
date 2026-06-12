@@ -194,6 +194,15 @@ class SchemaViewProvider {
                     case 'runQuery':
                         await this._handleRunQuery(msg.sql);
                         break;
+                    case 'getAuthTableFields':
+                        this._handleGetAuthTableFields(msg.tableName);
+                        break;
+                    case 'generateAuth':
+                        await this._handleGenerateAuth(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField, msg.options);
+                        break;
+                    case 'previewAuthSql':
+                        this._handlePreviewAuthSql(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField);
+                        break;
                 }
             },
             null,
@@ -674,6 +683,32 @@ class SchemaViewProvider {
                 vscode.window.showInformationMessage(`njs: Generated CRUD code for "${tableName}"`);
             } else {
                 vscode.window.showErrorMessage('njs: Failed to insert code - try clicking in the editor first');
+            }
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleGenerateApp(tableConfigs, authConfig, options) {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('njs: Open a file first to insert generated code');
+            return;
+        }
+        const { AppGenerator } = require('./appGenerator');
+        const appGen = new AppGenerator(this.schemaRegistry);
+        const result = appGen.generateApp(tableConfigs, authConfig, options || {});
+        let allCode = result.server;
+        if (result.html) allCode += '\n\n' + result.html;
+        if (result.js) allCode += '\n\n' + result.js;
+        try {
+            const edit = new vscode.WorkspaceEdit();
+            edit.insert(editor.document.uri, editor.selection.active, allCode);
+            const success = await vscode.workspace.applyEdit(edit);
+            if (success) {
+                const tableCount = tableConfigs ? tableConfigs.length : 0;
+                const label = authConfig ? ' with Auth' : '';
+                vscode.window.showInformationMessage(`njs: Generated app code for ${tableCount} tables${label}`);
             }
         } catch (err) {
             vscode.window.showErrorMessage(`njs: ${err.message}`);
@@ -1488,6 +1523,134 @@ class SchemaViewProvider {
         color: #888;
     }
 
+    /* Tab navigation */
+    .tab-bar {
+        display: flex;
+        gap: 4px;
+        margin: 0 12px;
+    }
+    .tab-btn {
+        background: #2d2d2d;
+        border: 1px solid #3c3c3c;
+        border-bottom: none;
+        border-radius: 8px 8px 0 0;
+        padding: 8px 20px;
+        color: #888;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .tab-btn:hover {
+        color: #d4d4d4;
+        background: #333;
+    }
+    .tab-btn.tab-active {
+        background: #1e1e1e;
+        color: #6cf;
+        border-color: #4fc3f7;
+        border-bottom-color: #1e1e1e;
+    }
+    .tab-content {
+        display: none;
+    }
+    .tab-content.tab-active {
+        display: block;
+    }
+
+    /* Auth panel */
+    .auth-panel {
+        background: #1a2a2a;
+        border: 1px solid #2a4a4a;
+        border-radius: 10px;
+        padding: 16px;
+        margin-top: 16px;
+    }
+    .auth-panel h3 {
+        color: #6cf;
+        font-size: 15px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .auth-section {
+        margin-bottom: 14px;
+    }
+    .auth-section label {
+        display: block;
+        color: #aaa;
+        font-size: 12px;
+        font-weight: 500;
+        margin-bottom: 4px;
+    }
+    .auth-section select {
+        background: #1e1e1e;
+        border: 1px solid #3c3c3c;
+        border-radius: 6px;
+        padding: 8px 12px;
+        color: #d4d4d4;
+        font-size: 13px;
+        font-family: 'Consolas', monospace;
+        width: 100%;
+        max-width: 400px;
+    }
+    .auth-section select:focus {
+        outline: none;
+        border-color: #0078d4;
+    }
+    .auth-field-cbs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 4px;
+    }
+    .auth-field-cb {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        background: #1e1e1e;
+        border: 1px solid #3c3c3c;
+        border-radius: 6px;
+        padding: 5px 12px;
+        font-size: 12px;
+        font-family: 'Consolas', monospace;
+        cursor: pointer;
+        transition: all 0.15s;
+        color: #888;
+        user-select: none;
+    }
+    .auth-field-cb:hover {
+        border-color: #555;
+    }
+    .auth-field-cb input[type="checkbox"] {
+        accent-color: #4fc3f7;
+        cursor: pointer;
+    }
+    .auth-field-cb.checked {
+        border-color: #4fc3f7;
+        background: #0d2a2a;
+        color: #8cf;
+    }
+    .auth-field-cb .auth-cb-type {
+        color: #666;
+        font-size: 10px;
+        margin-left: 2px;
+    }
+    .auth-no-fields {
+        color: #555;
+        font-size: 11px;
+        font-style: italic;
+    }
+    .auth-info {
+        color: #888;
+        font-size: 11px;
+        margin-top: 2px;
+    }
+    .auth-preview {
+        margin-top: 12px;
+    }
+
     /* Field toggle checkbox and active state */
     .field-toggle-cb {
         accent-color: #4fc3f7;
@@ -1522,6 +1685,12 @@ class SchemaViewProvider {
 <body>
     <div class="header">
         <h1>Schema Visualizer</h1>
+        <div class="tab-bar">
+            <button class="tab-btn tab-active" onclick="switchTab('tables')" id="tabTables">Tables</button>
+            <button class="tab-btn" onclick="switchTab('queries')" id="tabQueries">Query Builder</button>
+            <button class="tab-btn" onclick="switchTab('auth')" id="tabAuth">Auth</button>
+            <button class="tab-btn" onclick="switchTab('quickstart')" id="tabQuickstart">Quick Start</button>
+        </div>
         <div class="header-actions">
             <button class="btn btn-primary" onclick="addTable()">${this._svgAddIcon()} Add Table</button>
             <button class="btn btn-success" onclick="generateAll()" ${hasTables ? '' : 'disabled'}>
@@ -1534,109 +1703,268 @@ class SchemaViewProvider {
         </div>
     </div>
 
-    <div class="help-section">
-        <div style="display:flex;align-items:center;justify-content:space-between;">
-            <h4 style="margin:0;">What is a Foreign Key?</h4>
-            <button class="help-toggle" onclick="toggleHelp(event)" title="Toggle help section">
-                <span class="arrow" id="helpArrow">\u25BC</span> Hide
-            </button>
-        </div>
-        <div class="help-content" id="helpContent">
-            <p style="margin-top:10px;">
-                A <strong>Foreign Key (FK)</strong> links a field in one table to the
-                <span class="pk-highlight">Primary Key (PK)</span> of another table.
-                It ensures <strong>data integrity</strong> - you cannot reference something that does not exist.
-            </p>
-            <p style="margin-top:6px;">
-                <strong>Example:</strong>
-                <code>Enrollments.studentID</code> -&gt; <code>Students.studentID</code>
-                means every enrollment must belong to an <strong>existing</strong> student.
-                Click the <span class="fk-highlight">FK icon</span> on a non-PK field to create these links.
-            </p>
-            <p style="margin-top:6px; color:#888;">
-                <span class="tip-label">Tip:</span> Always register the <em>referenced</em> table first, then add the FK.
-            </p>
-        </div>
-    </div>
-
-    ${hasTables ? `
-    <div class="tables-container">
-        ${tableCards}
-    </div>
-    <div class="status-bar">
-        <span><strong>${tables.length}</strong> table${tables.length !== 1 ? 's' : ''} registered</span>
-        <span>Click FK icon on a non-PK field to add relationship, X to remove</span>
-    </div>
-
-    <!-- Query Builder -->
-    <div class="query-builder">
-        <h3>${this._svgGenerateIcon()} Query Builder</h3>
-        <div id="savedQueries">${savedQueryHtml}</div>
-        <hr class="qb-divider">
-        <div class="qb-header">
-            <input id="queryName" type="text" placeholder="Query name (e.g. enrollmentsWithCourses)" />
-            <label class="qb-distinct-toggle" title="SELECT DISTINCT">
-                <input type="checkbox" onchange="toggleDistinct(this.checked)" />
-                <span class="qb-distinct-label">DISTINCT</span>
-            </label>
-        </div>
-        <div class="drop-zone" id="dropZone">
-            Drag fields from table cards above
-        </div>
-        <div id="selectedColumns"></div>
-        <div class="qb-filters" id="qbFilters">
-            <span class="qb-filter-label">Filters (WHERE):</span>
-            <div id="filterRows"></div>
-            <button class="btn btn-info btn-sm" onclick="addFilter()" disabled id="addFilterBtn">+ Add Filter</button>
-        </div>
-        <div id="sortControls" class="qb-filters"></div>
-        <div id="groupBySection" class="qb-filters">
-            <span class="qb-filter-label">Group By:</span>
-            <div id="groupByCheckboxes" class="qb-groupby-cbs"></div>
-        </div>
-        <div id="havingSection" class="qb-filters">
-            <span class="qb-filter-label">Having:</span>
-            <div id="havingRows"></div>
-            <button class="btn btn-info btn-sm" onclick="addHaving()" disabled id="addHavingBtn">+ Add Having</button>
-        </div>
-        <div class="qb-actions">
-            <button class="btn btn-success gen-query-btn" onclick="generateQuery()" disabled>${this._svgGenerateIcon()} Generate All</button>
-            <button class="btn btn-primary gen-query-btn" onclick="generateQuery('sql')" disabled>SQL</button>
-            <button class="btn btn-primary gen-query-btn" onclick="generateQuery('js')" disabled>JS Fetch</button>
-            <button class="btn btn-primary gen-query-btn" onclick="generateQuery('server')" disabled>Server</button>
-            <button class="btn btn-primary gen-query-btn" onclick="generateQuery('card')" disabled>Card HTML</button>
-            <button class="btn btn-primary gen-query-btn" onclick="generateQuery('table')" disabled>Table HTML</button>
-            <button class="btn btn-warning" onclick="saveQuery()" disabled id="saveBtn">Save Query</button>
-            <button class="btn btn-danger" onclick="clearQuery()">Clear</button>
-        </div>
-        <hr class="qb-divider">
-        <div class="qb-preview-section">
-            <div class="qb-preview-header">
-                <span class="qb-filter-label" style="margin:0;">SQL Preview</span>
-                <button class="btn btn-info btn-sm" onclick="previewSqlQuery()" disabled id="previewSqlBtn">Refresh Preview</button>
-                <button class="btn btn-info btn-sm" onclick="copySqlPreview()" id="copySqlBtn" title="Copy SQL to clipboard">Copy SQL</button>
+    <div id="tabTablesContent" class="tab-content tab-active">
+        <div class="help-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <h4 style="margin:0;">What is a Foreign Key?</h4>
+                <button class="help-toggle" onclick="toggleHelp(event)" title="Toggle help section">
+                    <span class="arrow" id="helpArrow">\u25BC</span> Hide
+                </button>
             </div>
-            <textarea class="qb-preview-textarea" id="sqlPreview" readonly placeholder="Add columns and the SQL preview updates automatically"></textarea>
-            <div class="qb-db-selector">
-                <span class="qb-db-label">Database:</span>
-                <select id="dbFileSelect" onchange="onDbFileChange(this.value)">
-                    <option value="">— No database selected —</option>
+            <div class="help-content" id="helpContent">
+                <p style="margin-top:10px;">
+                    A <strong>Foreign Key (FK)</strong> links a field in one table to the
+                    <span class="pk-highlight">Primary Key (PK)</span> of another table.
+                    It ensures <strong>data integrity</strong> - you cannot reference something that does not exist.
+                </p>
+                <p style="margin-top:6px;">
+                    <strong>Example:</strong>
+                    <code>Enrollments.studentID</code> -&gt; <code>Students.studentID</code>
+                    means every enrollment must belong to an <strong>existing</strong> student.
+                    Click the <span class="fk-highlight">FK icon</span> on a non-PK field to create these links.
+                </p>
+                <p style="margin-top:6px; color:#888;">
+                    <span class="tip-label">Tip:</span> Always register the <em>referenced</em> table first, then add the FK.
+                </p>
+            </div>
+        </div>
+
+        ${hasTables ? `
+        <div class="tables-container">
+            ${tableCards}
+        </div>
+        <div class="status-bar">
+            <span><strong>${tables.length}</strong> table${tables.length !== 1 ? 's' : ''} registered</span>
+            <span>Click FK icon on a non-PK field to add relationship, X to remove</span>
+        </div>
+        ` : `
+        <div class="empty-state">
+            <h2>No tables yet</h2>
+            <p>Click <strong>+ Add Table</strong> to register your first table,<br>
+            or type <code>njs:register TableName:field1, field2, ...</code> in any file.</p>
+            <br>
+            <button class="btn btn-primary" onclick="addTable()">${this._svgAddIcon()} Add Table</button>
+        </div>
+        `}
+    </div>
+
+    <div id="tabQueriesContent" class="tab-content">
+        ${hasTables ? `
+        <div class="query-builder">
+            <h3>${this._svgGenerateIcon()} Query Builder</h3>
+            <div id="savedQueries">${savedQueryHtml}</div>
+            <hr class="qb-divider">
+            <div class="qb-header">
+                <input id="queryName" type="text" placeholder="Query name (e.g. enrollmentsWithCourses)" />
+                <label class="qb-distinct-toggle" title="SELECT DISTINCT">
+                    <input type="checkbox" onchange="toggleDistinct(this.checked)" />
+                    <span class="qb-distinct-label">DISTINCT</span>
+                </label>
+            </div>
+            <div class="drop-zone" id="dropZone">
+                Drag fields from table cards above
+            </div>
+            <div id="selectedColumns"></div>
+            <div class="qb-filters" id="qbFilters">
+                <span class="qb-filter-label">Filters (WHERE):</span>
+                <div id="filterRows"></div>
+                <button class="btn btn-info btn-sm" onclick="addFilter()" disabled id="addFilterBtn">+ Add Filter</button>
+            </div>
+            <div id="sortControls" class="qb-filters"></div>
+            <div id="groupBySection" class="qb-filters">
+                <span class="qb-filter-label">Group By:</span>
+                <div id="groupByCheckboxes" class="qb-groupby-cbs"></div>
+            </div>
+            <div id="havingSection" class="qb-filters">
+                <span class="qb-filter-label">Having:</span>
+                <div id="havingRows"></div>
+                <button class="btn btn-info btn-sm" onclick="addHaving()" disabled id="addHavingBtn">+ Add Having</button>
+            </div>
+            <div class="qb-actions">
+                <button class="btn btn-success gen-query-btn" onclick="generateQuery()" disabled>${this._svgGenerateIcon()} Generate All</button>
+                <button class="btn btn-primary gen-query-btn" onclick="generateQuery('sql')" disabled>SQL</button>
+                <button class="btn btn-primary gen-query-btn" onclick="generateQuery('js')" disabled>JS Fetch</button>
+                <button class="btn btn-primary gen-query-btn" onclick="generateQuery('server')" disabled>Server</button>
+                <button class="btn btn-primary gen-query-btn" onclick="generateQuery('card')" disabled>Card HTML</button>
+                <button class="btn btn-primary gen-query-btn" onclick="generateQuery('table')" disabled>Table HTML</button>
+                <button class="btn btn-warning" onclick="saveQuery()" disabled id="saveBtn">Save Query</button>
+                <button class="btn btn-danger" onclick="clearQuery()">Clear</button>
+            </div>
+            <hr class="qb-divider">
+            <div class="qb-preview-section">
+                <div class="qb-preview-header">
+                    <span class="qb-filter-label" style="margin:0;">SQL Preview</span>
+                    <button class="btn btn-info btn-sm" onclick="previewSqlQuery()" disabled id="previewSqlBtn">Refresh Preview</button>
+                    <button class="btn btn-info btn-sm" onclick="copySqlPreview()" id="copySqlBtn" title="Copy SQL to clipboard">Copy SQL</button>
+                </div>
+                <textarea class="qb-preview-textarea" id="sqlPreview" readonly placeholder="Add columns and the SQL preview updates automatically"></textarea>
+                <div class="qb-db-selector">
+                    <span class="qb-db-label">Database:</span>
+                    <select id="dbFileSelect" onchange="onDbFileChange(this.value)">
+                        <option value="">— No database selected —</option>
+                    </select>
+                    <button class="qb-db-refresh-btn" onclick="findDbFiles()" title="Refresh database file list">&#x21bb;</button>
+                    <button class="btn btn-success btn-sm" onclick="runSqlQuery()" id="runQueryBtn" title="Run the generated SQL against the selected database">&#x25B6; Run Query</button>
+                </div>
+                <div id="queryResults"></div>
+            </div>
+        </div>
+        ` : `
+        <div class="empty-state">
+            <h2>Register tables first</h2>
+            <p>Go to the <strong>Tables</strong> tab, add some tables,<br>
+            then come here to build custom queries.</p>
+        </div>
+        `}
+    </div>
+
+    <div id="tabAuthContent" class="tab-content">
+        ${hasTables ? `
+        <div class="auth-panel">
+            <h3>${this._svgGenerateIcon()} Auth Generator</h3>
+            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+                Generate a login route for <strong>any</strong> registered table.
+                Pick which fields identify the user and which field holds the password.
+            </p>
+
+            <div class="auth-section">
+                <label>Step 1: Pick any table</label>
+                <select id="authTableSelect" onchange="onAuthTableChange(this.value)">
+                    <option value="">— Select a table —</option>
+                    ${tables.map(t => `<option value="${this._escapeHtml(t)}">${this._escapeHtml(t)}</option>`).join('\n')}
                 </select>
-                <button class="qb-db-refresh-btn" onclick="findDbFiles()" title="Refresh database file list">&#x21bb;</button>
-                <button class="btn btn-success btn-sm" onclick="runSqlQuery()" id="runQueryBtn" title="Run the generated SQL against the selected database">&#x25B6; Run Query</button>
             </div>
-            <div id="queryResults"></div>
+
+            <div class="auth-section" id="authIdentitySection" style="opacity:0.4;pointer-events:none;">
+                <label>Step 2: Identity fields (check 1 or more — login requires ALL checked)</label>
+                <div id="authIdentityFields" class="auth-field-cbs">
+                    <span class="auth-no-fields">Select a table first</span>
+                </div>
+            </div>
+
+            <div class="auth-section" id="authPasswordSection" style="opacity:0.4;pointer-events:none;">
+                <label>Step 3: Password field</label>
+                <select id="authPasswordSelect">
+                    <option value="">— Select password field —</option>
+                </select>
+            </div>
+
+            <div class="auth-section" id="authStatusSection" style="opacity:0.4;pointer-events:none;">
+                <label>Step 4: Status field (optional — for active/inactive check)</label>
+                <select id="authStatusSelect">
+                    <option value="">— None (skip status check) —</option>
+                </select>
+                <div class="auth-info">If selected, login will reject accounts where this field is not 'active'.</div>
+            </div>
+
+            <div class="auth-section" id="authOptionsSection" style="opacity:0.4;pointer-events:none;">
+                <label>Step 5: Output options</label>
+                <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">
+                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptRoute" />
+                        <span>Login route (server)</span>
+                    </label>
+                    <label class="qb-groupby-cb" style="color:#888;">
+                        <input type="checkbox" onchange="onAuthOptionChange()" id="authOptRegister" />
+                        <span>Register route (server)</span>
+                    </label>
+                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptHtml" />
+                        <span>Login form HTML</span>
+                    </label>
+                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptJwt" />
+                        <span>Use JWT</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="qb-actions" style="margin-top:16px;">
+                <button class="btn btn-success" onclick="generateAuth()" disabled id="authGenBtn">${this._svgGenerateIcon()} Generate Auth Code</button>
+                <button class="btn btn-info" onclick="previewAuthSql()" disabled id="authPrevBtn">Preview SQL</button>
+                <button class="btn btn-warning" onclick="clearAuth()">Clear</button>
+            </div>
+
+            <hr class="qb-divider">
+            <div class="auth-preview">
+                <div class="qb-preview-header">
+                    <span class="qb-filter-label" style="margin:0;">Generated Code Preview</span>
+                    <button class="btn btn-info btn-sm" onclick="copyAuthPreview()" id="copyAuthBtn" title="Copy to clipboard">Copy Code</button>
+                </div>
+                <textarea class="qb-preview-textarea" id="authPreview" readonly placeholder="Configure auth above and click Preview SQL or Generate Auth Code"></textarea>
+            </div>
+        </div>
+        ` : `
+        <div class="empty-state">
+            <h2>Register tables first</h2>
+            <p>Go to the <strong>Tables</strong> tab, add at least one table<br>
+            with a password field, then configure authentication here.</p>
+        </div>
+        `}
+    </div>
+
+    <div id="tabQuickstartContent" class="tab-content">
+        <div class="auth-panel">
+            <h3>Quick App Generator</h3>
+            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+                Select tables, choose what to generate, and click one button.<br>
+                Works for <strong>any</strong> project.
+            </p>
+
+            <div class="auth-section">
+                <label>Step 1: Pick tables to include</label>
+                <div id="qsTableList" class="auth-field-cbs">
+                    ${tables.map(t => {
+                        const qsTable = this.schemaRegistry.getTable(t);
+                        const qsFc = qsTable ? qsTable.fields.length : 0;
+                        return `<label class="auth-field-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                            <input type="checkbox" checked onchange="onQsTableToggle('${this._jsStr(t)}', this.checked)" />
+                            <span>${this._escapeHtml(t)}</span>
+                            <span class="auth-cb-type">(${qsFc} fields)</span>
+                        </label>`;
+                    }).join('\n')}
+                </div>
+            </div>
+
+            <div class="auth-section">
+                <label>Step 2: What to generate</label>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;">
+                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <input type="checkbox" checked onchange="updateQsBtn()" id="qsOptCrud" />
+                        <span>CRUD Routes (server)</span>
+                    </label>
+                    <label class="qb-groupby-cb" style="color:#888;">
+                        <input type="checkbox" onchange="updateQsBtn()" id="qsOptCreateTable" />
+                        <span>CREATE TABLE SQL</span>
+                    </label>
+                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <input type="checkbox" checked onchange="updateQsBtn()" id="qsOptPage" />
+                        <span>HTML Pages (form + list)</span>
+                    </label>
+                    <label class="qb-groupby-cb" style="color:#888;">
+                        <input type="checkbox" onchange="updateQsBtn()" id="qsOptBoilerplate" />
+                        <span>Full HTML boilerplate</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="auth-section" style="border-top:1px solid #2a4a4a;padding-top:12px;">
+                <label>Optional: Include Auth</label>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;align-items:center;">
+                    <label class="qb-groupby-cb" style="color:#888;">
+                        <input type="checkbox" onchange="updateQsBtn()" id="qsEnableAuth" />
+                        <span>Include login system</span>
+                    </label>
+                    <span style="color:#555;font-size:11px;">(configure in Auth tab first)</span>
+                </div>
+            </div>
+
+            <div class="qb-actions" style="margin-top:16px;">
+                <button class="btn btn-success" onclick="generateApp()" id="qsGenBtn">Generate Everything</button>
+                <button class="btn btn-warning" onclick="clearQs()">Clear</button>
+            </div>
         </div>
     </div>
-    ` : `
-    <div class="empty-state">
-        <h2>No tables yet</h2>
-        <p>Click <strong>+ Add Table</strong> to register your first table,<br>
-        or type <code>njs:register TableName:field1, field2, ...</code> in any file.</p>
-        <br>
-        <button class="btn btn-primary" onclick="addTable()">${this._svgAddIcon()} Add Table</button>
-    </div>
-    `}
 
     <script>
         const vscode = acquireVsCodeApi();
@@ -2265,6 +2593,11 @@ class SchemaViewProvider {
             } else if (msg.command === 'sqlPreviewResult') {
                 var ta = document.getElementById('sqlPreview');
                 if (ta) ta.value = msg.sql || '-- No SQL generated';
+            } else if (msg.command === 'authFieldsReceived') {
+                renderAuthFields(msg.table, msg.suggestedIdentity || [], msg.suggestedPassword || null, msg.suggestedStatus || null);
+            } else if (msg.command === 'authPreviewResult') {
+                var authTa = document.getElementById('authPreview');
+                if (authTa) authTa.value = msg.code || '// No code generated';
             }
         });
 
@@ -2401,6 +2734,207 @@ class SchemaViewProvider {
         }
         // --- end DB Runner ---
 
+        // --- Tab Navigation ---
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(function(el) {
+                el.classList.remove('tab-active');
+            });
+            document.querySelectorAll('.tab-btn').forEach(function(el) {
+                el.classList.remove('tab-active');
+            });
+            var tabId = 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1) + 'Content';
+            var btnId = 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            var tabEl = document.getElementById(tabId);
+            var btnEl = document.getElementById(btnId);
+            if (tabEl) tabEl.classList.add('tab-active');
+            if (btnEl) btnEl.classList.add('tab-active');
+        }
+
+        // --- Auth Generator ---
+        var authState = { table: null, identityFields: [], passwordField: null, statusField: null };
+
+        function onAuthTableChange(tableName) {
+            if (!tableName) {
+                disableAuthSections();
+                authState.table = null;
+                return;
+            }
+            authState.table = tableName;
+            vscode.postMessage({ command: 'getAuthTableFields', tableName: tableName });
+        }
+
+        function disableAuthSections() {
+            ['authIdentitySection','authPasswordSection','authStatusSection','authOptionsSection'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) { el.style.opacity = '0.4'; el.style.pointerEvents = 'none'; }
+            });
+            document.getElementById('authGenBtn').disabled = true;
+            document.getElementById('authPrevBtn').disabled = true;
+        }
+
+        function enableAuthSections() {
+            ['authIdentitySection','authPasswordSection','authStatusSection','authOptionsSection'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) { el.style.opacity = '1'; el.style.pointerEvents = 'auto'; }
+            });
+        }
+
+        function renderAuthFields(table, suggestedIdentity, suggestedPassword, suggestedStatus) {
+            enableAuthSections();
+
+            // Render identity field checkboxes
+            var container = document.getElementById('authIdentityFields');
+            if (!container) return;
+            authState.identityFields = [];
+            container.innerHTML = table.fields.map(function(f) {
+                if (f.name === suggestedPassword) return '';
+                var isSuggested = suggestedIdentity.indexOf(f.name) >= 0;
+                if (isSuggested) authState.identityFields.push(f.name);
+                var checked = isSuggested ? ' checked' : '';
+                var cls = isSuggested ? 'auth-field-cb checked' : 'auth-field-cb';
+                var typeLabel = f.type || 'TEXT';
+                var safeName = f.name.replace(/'/g, "\\'");
+                return '<label class="' + cls + '">' +
+                    '<input type="checkbox" ' + checked + ' onchange="toggleAuthIdentityField(\'' + safeName + '\', this.checked)" />' +
+                    '<span>' + f.name + '</span>' +
+                    '<span class="auth-cb-type">(' + typeLabel + ')</span>' +
+                    '</label>';
+            }).filter(Boolean).join('') || '<span class="auth-no-fields">No fields available</span>';
+
+            // Render password dropdown
+            var pwSelect = document.getElementById('authPasswordSelect');
+            if (pwSelect) {
+                pwSelect.innerHTML = '<option value="">— Select password field —</option>' +
+                    table.fields.map(function(f) {
+                        var sel = (f.name === suggestedPassword) ? ' selected' : '';
+                        return '<option value="' + f.name.replace(/'/g, "\\'") + '"' + sel + '>' + f.name + ' (' + (f.type || 'TEXT') + ')</option>';
+                    }).join('');
+                authState.passwordField = suggestedPassword;
+            }
+
+            // Render status dropdown
+            var statSelect = document.getElementById('authStatusSelect');
+            if (statSelect) {
+                statSelect.innerHTML = '<option value="">— None (skip status check) —</option>' +
+                    table.fields.map(function(f) {
+                        var sel = (f.name === suggestedStatus) ? ' selected' : '';
+                        return '<option value="' + f.name.replace(/'/g, "\\'") + '"' + sel + '>' + f.name + ' (' + (f.type || 'TEXT') + ')</option>';
+                    }).join('');
+                authState.statusField = suggestedStatus;
+            }
+
+            updateAuthGenBtn();
+        }
+
+        function toggleAuthIdentityField(fieldName, checked) {
+            if (checked) {
+                if (authState.identityFields.indexOf(fieldName) < 0) {
+                    authState.identityFields.push(fieldName);
+                }
+            } else {
+                authState.identityFields = authState.identityFields.filter(function(f) { return f !== fieldName; });
+            }
+            // Update visual state
+            document.querySelectorAll('#authIdentityFields .auth-field-cb').forEach(function(lbl) {
+                var cb = lbl.querySelector('input[type="checkbox"]');
+                var name = '';
+                if (cb) {
+                    var match = cb.getAttribute('onchange').match(/toggleAuthIdentityField\('([^']+)'/);
+                    if (match) name = match[1];
+                }
+                lbl.classList.toggle('checked', authState.identityFields.indexOf(name) >= 0);
+            });
+            updateAuthGenBtn();
+        }
+
+        function onAuthOptionChange() {
+            updateAuthGenBtn();
+        }
+
+        function updateAuthGenBtn() {
+            var hasIdentity = authState.identityFields.length > 0;
+            var hasPassword = !!authState.passwordField;
+            var hasRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : false;
+            var hasRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
+            var hasHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : false;
+            var enabled = authState.table && hasIdentity && hasPassword && (hasRoute || hasRegister || hasHtml);
+            var genBtn = document.getElementById('authGenBtn');
+            var prevBtn = document.getElementById('authPrevBtn');
+            if (genBtn) genBtn.disabled = !enabled;
+            if (prevBtn) prevBtn.disabled = !enabled;
+        }
+
+        function generateAuth() {
+            if (!authState.table || authState.identityFields.length === 0 || !authState.passwordField) return;
+            var genRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : true;
+            var genRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
+            var genHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : true;
+            var useJwt = document.getElementById('authOptJwt') ? document.getElementById('authOptJwt').checked : true;
+            vscode.postMessage({
+                command: 'generateAuth',
+                tableName: authState.table,
+                identityFields: authState.identityFields,
+                passwordField: authState.passwordField,
+                statusField: authState.statusField || null,
+                options: {
+                    useJwt: useJwt,
+                    generateRoute: genRoute,
+                    generateRegister: genRegister,
+                    generateHtml: genHtml
+                }
+            });
+        }
+
+        function previewAuthSql() {
+            if (!authState.table || authState.identityFields.length === 0 || !authState.passwordField) return;
+            vscode.postMessage({
+                command: 'previewAuthSql',
+                tableName: authState.table,
+                identityFields: authState.identityFields,
+                passwordField: authState.passwordField,
+                statusField: authState.statusField || null
+            });
+        }
+
+        function clearAuth() {
+            var tableSelect = document.getElementById('authTableSelect');
+            if (tableSelect) tableSelect.value = '';
+            var idFields = document.getElementById('authIdentityFields');
+            if (idFields) idFields.innerHTML = '<span class="auth-no-fields">Select a table first</span>';
+            var pwSelect = document.getElementById('authPasswordSelect');
+            if (pwSelect) pwSelect.innerHTML = '<option value="">— Select password field —</option>';
+            var statSelect = document.getElementById('authStatusSelect');
+            if (statSelect) statSelect.innerHTML = '<option value="">— None (skip status check) —</option>';
+            var preview = document.getElementById('authPreview');
+            if (preview) preview.value = '';
+            disableAuthSections();
+            authState.table = null;
+            authState.identityFields = [];
+            authState.passwordField = null;
+            authState.statusField = null;
+        }
+
+        function copyAuthPreview() {
+            var ta = document.getElementById('authPreview');
+            if (!ta || !ta.value) return;
+            navigator.clipboard.writeText(ta.value).then(function() {
+                var btn = document.getElementById('copyAuthBtn');
+                if (!btn) return;
+                var orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.style.background = '#0d7a3e';
+                btn.style.color = '#fff';
+                setTimeout(function() {
+                    btn.textContent = orig;
+                    btn.style.background = '';
+                    btn.style.color = '';
+                }, 1500);
+            }).catch(function() {
+                ta.select();
+            });
+        }
+        // --- end Auth Generator ---
+
         function toggleHelp(event) {
             if (event) event.stopPropagation();
             const content = document.getElementById('helpContent');
@@ -2409,6 +2943,109 @@ class SchemaViewProvider {
             content.classList.toggle('hidden');
             btn.innerHTML = '<span class="arrow">' + (content.classList.contains('hidden') ? '\u25B6' : '\u25BC') + '</span> ' + (content.classList.contains('hidden') ? 'Show' : 'Hide');
         }
+
+        
+        // --- Quick App Generator ---
+                var qsTables = [];
+        // Initialize qsTables with all pre-checked tables on page load
+        (function initQs() {
+            var cbs = document.querySelectorAll('#qsTableList input[type="checkbox"]');
+            if (cbs.length > 0) {
+                cbs.forEach(function(cb) {
+                    var m = cb.getAttribute('onchange').match(/onQsTableToggle\('([^']+)'/);
+                    if (m) qsTables.push(m[1]);
+                });
+            }
+            updateQsBtn();
+        })();
+
+        function onQsTableToggle(name, checked) {
+
+            if (checked) {
+                if (qsTables.indexOf(name) < 0) qsTables.push(name);
+            } else {
+                qsTables = qsTables.filter(function(t) { return t !== name; });
+            }
+            updateQsBtn();
+        }
+
+        function onQsOptionChange() {
+            updateQsBtn();
+        }
+
+        function onQsAuthToggle(checked) {
+            updateQsBtn();
+        }
+
+        function updateQsBtn() {
+            var tablesSelected = qsTables.length > 0;
+            var hasRoute = document.getElementById('qsOptCrud') ? document.getElementById('qsOptCrud').checked : false;
+            var hasCreate = document.getElementById('qsOptCreateTable') ? document.getElementById('qsOptCreateTable').checked : false;
+            var hasPage = document.getElementById('qsOptPage') ? document.getElementById('qsOptPage').checked : false;
+            var enabled = tablesSelected && (hasRoute || hasCreate || hasPage);
+            var btn = document.getElementById('qsGenBtn');
+            if (btn) btn.disabled = !enabled;
+        }
+
+        function generateApp() {
+            var tablesList = [];
+            // Collect checked tables
+            document.querySelectorAll('#qsTableList .auth-field-cb input[type="checkbox"]').forEach(function(cb) {
+                var onclick = cb.getAttribute('onchange') || '';
+                var match = onclick.match(/onQsTableToggle\('([^']+)'/);
+                if (match && cb.checked) tablesList.push(match[1]);
+            });
+            if (tablesList.length === 0) return;
+            var crud = document.getElementById('qsOptCrud') ? document.getElementById('qsOptCrud').checked : false;
+            var createTable = document.getElementById('qsOptCreateTable') ? document.getElementById('qsOptCreateTable').checked : false;
+            var page = document.getElementById('qsOptPage') ? document.getElementById('qsOptPage').checked : false;
+            var boilerplate = document.getElementById('qsOptBoilerplate') ? document.getElementById('qsOptBoilerplate').checked : false;
+            var includeAuth = document.getElementById('qsEnableAuth') ? document.getElementById('qsEnableAuth').checked : false;
+
+            var authConfig = null;
+            if (includeAuth && window.authState && window.authState.table) {
+                authConfig = {
+                    tableName: window.authState.table,
+                    identityFields: window.authState.identityFields,
+                    passwordField: window.authState.passwordField,
+                    statusField: window.authState.statusField || null,
+                    useJwt: true,
+                    generateRoute: true,
+                    generateHtml: true
+                };
+            }
+
+            vscode.postMessage({
+                command: 'generateApp',
+                tableConfigs: tablesList.map(function(t) {
+                    return { tableName: t, crud: crud, createTable: createTable, page: page, list: false, form: false };
+                }),
+                authConfig: authConfig,
+                options: {
+                    includeServerBoilerplate: boilerplate,
+                    includeHtmlBoilerplate: boilerplate
+                }
+            });
+        }
+
+        function clearQs() {
+            document.querySelectorAll('#qsTableList input[type="checkbox"]').forEach(function(cb) {
+                cb.checked = true;
+            });
+            document.getElementById('qsEnableAuth').checked = false;
+            // Re-init qsTables
+            qsTables = [];
+            document.querySelectorAll('#qsTableList .auth-field-cb').forEach(function(lbl) {
+                var match = lbl.querySelector('input') ? (lbl.querySelector('input').getAttribute('onchange') || '').match(/onQsTableToggle\('([^']+)'/) : null;
+                if (match) qsTables.push(match[1]);
+                lbl.classList.add('checked');
+                lbl.style.borderColor = '#4fc3f7';
+                lbl.style.background = '#0d2a2a';
+                lbl.style.color = '#8cf';
+            });
+            updateQsBtn();
+        }
+        // --- end Quick App Generator ---
 
         function editField(tableName, fieldName, event) {
             if (event) event.stopPropagation();
