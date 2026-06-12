@@ -2946,18 +2946,21 @@ class SchemaViewProvider {
 
         
         // --- Quick App Generator ---
-                var qsTables = [];
+        var qsTables = [];
         // Initialize qsTables with all pre-checked tables on page load
-        (function initQs() {
-            var cbs = document.querySelectorAll('#qsTableList input[type="checkbox"]');
-            if (cbs.length > 0) {
-                cbs.forEach(function(cb) {
-                    var m = cb.getAttribute('onchange').match(/onQsTableToggle\('([^']+)'/);
+        try {
+            var qsCbs = document.querySelectorAll('#qsTableList input[type="checkbox"]');
+            if (qsCbs && qsCbs.length > 0) {
+                qsCbs.forEach(function(cb) {
+                    var onchange = cb.getAttribute('onchange') || '';
+                    var m = onchange.match(/onQsTableToggle\('([^']+)'/);
                     if (m) qsTables.push(m[1]);
                 });
             }
-            updateQsBtn();
-        })();
+        } catch(e) {
+            // Silently handle init error
+        }
+        updateQsBtn();
 
         function onQsTableToggle(name, checked) {
 

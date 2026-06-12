@@ -2,7 +2,7 @@
   "name": "node-sqlite-snippets",
   "displayName": "Express Full-Stack Snippets",
   "description": "🚀 The ultimate VS Code extension for Express + SQLite full-stack development. Includes 45+ schema-aware njs-snippets for CRUD, Auth, Security, Frontend & an offline AI code assistant (GGUF models).",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "publisher": "maxxNcode",
   "license": "MIT",
   "icon": "icon.png",
