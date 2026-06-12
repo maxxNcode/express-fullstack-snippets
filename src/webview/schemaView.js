@@ -971,6 +971,7 @@
             var genRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
             var genHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : true;
             var useJwt = document.getElementById('authOptJwt') ? document.getElementById('authOptJwt').checked : true;
+            var useBcrypt = document.getElementById('authOptBcrypt') ? document.getElementById('authOptBcrypt').checked : true;
             vscode.postMessage({
                 command: 'generateAuth',
                 tableName: authState.table,
@@ -979,6 +980,7 @@
                 statusField: authState.statusField || null,
                 options: {
                     useJwt: useJwt,
+                    useBcrypt: useBcrypt,
                     generateRoute: genRoute,
                     generateRegister: genRegister,
                     generateHtml: genHtml
@@ -988,12 +990,14 @@
 
         function previewAuthSql() {
             if (!authState.table || authState.identityFields.length === 0 || !authState.passwordField) return;
+            var useBcrypt = document.getElementById('authOptBcrypt') ? document.getElementById('authOptBcrypt').checked : true;
             vscode.postMessage({
                 command: 'previewAuthSql',
                 tableName: authState.table,
                 identityFields: authState.identityFields,
                 passwordField: authState.passwordField,
-                statusField: authState.statusField || null
+                statusField: authState.statusField || null,
+                useBcrypt: useBcrypt
             });
         }
 

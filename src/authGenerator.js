@@ -29,6 +29,7 @@ class AuthGenerator {
         }
 
         const useJwt = options.useJwt !== false; // default true
+        const useBcrypt = options.useBcrypt !== false; // default true
         const pk = this._getPK(tableName);
         const tableLower = tableName.toLowerCase();
 
@@ -40,7 +41,10 @@ class AuthGenerator {
         if (useJwt) {
             code += "const jwt = require('jsonwebtoken');\n";
         }
-        code += "const bcrypt = require('bcrypt');\n\n";
+        if (useBcrypt) {
+            code += "const bcrypt = require('bcrypt');\n";
+        }
+        code += '\n';
 
         code += `app.post('/api/auth/login', (req, res) => {\n`;
         code += '  try {\n';
@@ -58,7 +62,11 @@ class AuthGenerator {
         }
 
         // Password comparison
-        code += `    const valid = bcrypt.compareSync(${passwordField}, row.${passwordField});\n`;
+        if (useBcrypt) {
+            code += `    const valid = bcrypt.compareSync(${passwordField}, row.${passwordField});\n`;
+        } else {
+            code += `    const valid = (${passwordField} === row.${passwordField});\n`;
+        }
         code += `    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });\n`;
 
         // JWT generation
@@ -84,23 +92,28 @@ class AuthGenerator {
      * @param {string} passwordField - The password field (will be bcrypt-hashed)
      * @returns {string} Generated server route code
      */
-    generateRegister(tableName, allFields, passwordField) {
+    generateRegister(tableName, allFields, passwordField, options = {}) {
         if (!tableName || !allFields || allFields.length === 0 || !passwordField) {
             return '// Auth: Missing required configuration for register';
         }
 
-        const nonPasswordFields = allFields.filter(f => f !== passwordField);
+        const useBcrypt = options.useBcrypt !== false; // default true
         const insertFields = allFields.join(', ');
-        const insertPlaceholders = allFields.map(f => f === passwordField ? 'hashedPassword' : `req.body.${f}`).join(', ');
+        const insertPlaceholders = allFields.map(f => f === passwordField ? (useBcrypt ? 'hashedPassword' : `req.body.${f}`) : `req.body.${f}`).join(', ');
 
         let code = '';
         code += '// --- Auth: Register ---\n';
-        code += "const bcrypt = require('bcrypt');\n\n";
+        if (useBcrypt) {
+            code += "const bcrypt = require('bcrypt');\n";
+        }
+        code += '\n';
 
         code += `app.post('/api/auth/register', (req, res) => {\n`;
         code += '  try {\n';
         code += `    const { ${allFields.join(', ')} } = req.body;\n`;
-        code += `    const hashedPassword = bcrypt.hashSync(${passwordField}, 10);\n`;
+        if (useBcrypt) {
+            code += `    const hashedPassword = bcrypt.hashSync(${passwordField}, 10);\n`;
+        }
 
         // Check for duplicate identity (first field)
         const firstIdentity = allFields[0];

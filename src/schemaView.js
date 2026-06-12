@@ -208,7 +208,7 @@ class SchemaViewProvider {
                         await this._handleGenerateAuth(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField, msg.options);
                         break;
                     case 'previewAuthSql':
-                        this._handlePreviewAuthSql(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField);
+                        this._handlePreviewAuthSql(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField, msg.useBcrypt);
                         break;
                 }
             },
@@ -579,7 +579,7 @@ class SchemaViewProvider {
         if (opts.generateRegister) {
             const table = this.schemaRegistry.getTable(tableName);
             const allFields = table ? table.fields.map(f => f.name) : [];
-            allCode += authGen.generateRegister(tableName, allFields, passwordField);
+            allCode += authGen.generateRegister(tableName, allFields, passwordField, opts);
             allCode += '\n\n';
         }
         if (opts.generateHtml !== false) {
@@ -601,11 +601,12 @@ class SchemaViewProvider {
         }
     }
 
-    _handlePreviewAuthSql(tableName, identityFields, passwordField, statusField) {
+    _handlePreviewAuthSql(tableName, identityFields, passwordField, statusField, useBcrypt) {
         if (!this._panel) return;
         const { AuthGenerator } = require('./authGenerator');
         const authGen = new AuthGenerator(this.schemaRegistry);
-        const code = authGen.generateLogin(tableName, identityFields, passwordField, statusField, { useJwt: true });
+        const useBcryptVal = useBcrypt !== false; // default true
+        const code = authGen.generateLogin(tableName, identityFields, passwordField, statusField, { useJwt: true, useBcrypt: useBcryptVal });
         this._panel.webview.postMessage({
             command: 'authPreviewResult',
             code: code
@@ -1035,6 +1036,10 @@ class SchemaViewProvider {
                     <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
                         <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptHtml" />
                         <span>Login form HTML</span>
+                    </label>
+                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptBcrypt" />
+                        <span>Use bcrypt</span>
                     </label>
                     <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
                         <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptJwt" />
