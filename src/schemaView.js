@@ -539,6 +539,77 @@ class SchemaViewProvider {
         }
     }
 
+    _handleGetAuthTableFields(tableName) {
+        if (!this._panel) return;
+        const table = this.schemaRegistry.getTable(tableName);
+        if (!table) {
+            this._panel.webview.postMessage({ command: 'authFieldsReceived', table: { fields: [] }, suggestedIdentity: [], suggestedPassword: null, suggestedStatus: null });
+            return;
+        }
+        const { AuthGenerator } = require('./authGenerator');
+        const authGen = new AuthGenerator(this.schemaRegistry);
+        const suggestedIdentity = authGen.detectIdentityFields(table);
+        const suggestedPassword = authGen.detectPasswordField(table);
+        const suggestedStatus = authGen.detectStatusField(table);
+        this._panel.webview.postMessage({
+            command: 'authFieldsReceived',
+            table: { fields: table.fields },
+            suggestedIdentity: suggestedIdentity,
+            suggestedPassword: suggestedPassword,
+            suggestedStatus: suggestedStatus
+        });
+    }
+
+    async _handleGenerateAuth(tableName, identityFields, passwordField, statusField, options) {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('njs: Open a file first to insert generated code');
+            return;
+        }
+        const { AuthGenerator } = require('./authGenerator');
+        const authGen = new AuthGenerator(this.schemaRegistry);
+        const opts = options || {};
+        let allCode = '';
+        if (opts.generateRoute !== false) {
+            allCode += authGen.generateLogin(tableName, identityFields, passwordField, statusField, opts);
+            allCode += '\n\n';
+        }
+        if (opts.generateRegister) {
+            const table = this.schemaRegistry.getTable(tableName);
+            const allFields = table ? table.fields.map(f => f.name) : [];
+            allCode += authGen.generateRegister(tableName, allFields, passwordField);
+            allCode += '\n\n';
+        }
+        if (opts.generateHtml !== false) {
+            allCode += authGen.generateLoginFormHtml(tableName, identityFields, passwordField, opts);
+            allCode += '\n\n';
+        }
+        if (!allCode) {
+            allCode = '// Auth: Select at least one output option (route, register, or HTML)';
+        }
+        try {
+            const edit = new vscode.WorkspaceEdit();
+            edit.insert(editor.document.uri, editor.selection.active, allCode);
+            const success = await vscode.workspace.applyEdit(edit);
+            if (success) {
+                vscode.window.showInformationMessage(`njs: Generated auth code for "${tableName}"`);
+            }
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    _handlePreviewAuthSql(tableName, identityFields, passwordField, statusField) {
+        if (!this._panel) return;
+        const { AuthGenerator } = require('./authGenerator');
+        const authGen = new AuthGenerator(this.schemaRegistry);
+        const code = authGen.generateLogin(tableName, identityFields, passwordField, statusField, { useJwt: true });
+        this._panel.webview.postMessage({
+            command: 'authPreviewResult',
+            code: code
+        });
+    }
+
     _handleFindDbFiles() {
         if (!this._panel) return;
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
