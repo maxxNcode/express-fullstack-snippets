@@ -132,7 +132,13 @@ class SchemaViewProvider {
         if (this._messageListener) {
             this._messageListener.dispose();
         }
-        this._panel.webview.html = this._getHtml();
+        try {
+            this._panel.webview.html = this._getHtml();
+        } catch (err) {
+            console.error('njs: _getHtml() error:', err.message, err.stack);
+            this._panel.webview.html = '<!DOCTYPE html><html><body><h2>Schema Visualizer Error</h2><p>' +
+                err.message.replace(/</g, '&lt;') + '</p><p>Check the developer console for details.</p></body></html>';
+        }
         this._messageListener = this._panel.webview.onDidReceiveMessage(
             async (msg) => {
                 switch (msg.command) {
