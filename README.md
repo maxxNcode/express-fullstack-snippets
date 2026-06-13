@@ -1,7 +1,7 @@
 # Express Full-Stack Snippets
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.0.0-blue.svg" alt="Version 3.0.0"/>
+  <img src="https://img.shields.io/badge/version-3.2.0-blue.svg" alt="Version 3.2.0"/>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/VS%20Code-1.74%2B-purple.svg" alt="VS Code 1.74+"/>
   <img src="https://img.shields.io/badge/AI-Offline%20%7C%20GGUF-orange.svg" alt="Offline AI"/>
@@ -30,7 +30,7 @@ Includes **45+ schema-aware snippets**, inline code generation, and an **offline
 
 1. Open VS Code -> Extensions sidebar (`Ctrl+Shift+X`)
 2. Click `...` (More Actions) -> **Install from VSIX...**
-3. Select `node-sqlite-snippets-3.0.0.vsix`
+3. Select `node-sqlite-snippets-3.2.0.vsix`
 4. Reload VS Code if prompted
 
 ### From VS Code Marketplace
