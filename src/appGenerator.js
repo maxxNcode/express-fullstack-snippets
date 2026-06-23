@@ -92,7 +92,21 @@ class AppGenerator {
                 const table = this.schemaRegistry.getTable(authConfig.tableName);
                 const allFields = table ? table.fields.map(f => f.name) : [];
                 serverCode += this.authGen.generateRegister(
-                    authConfig.tableName, allFields, authConfig.passwordField
+                    authConfig.tableName, allFields, authConfig.passwordField,
+                    { ...authConfig, identityFields: authConfig.identityFields }
+                );
+                serverCode += '\n\n';
+            }
+
+            // Auth middleware (JWT verify, refresh, logout, rate limit)
+            if (authConfig.useJwt !== false) {
+                serverCode += this.authGen.generateAuthMiddleware(
+                    authConfig.tableName, authConfig.identityFields,
+                    { useJwt: authConfig.useJwt !== false }
+                );
+                serverCode += '\n\n';
+                serverCode += this.authGen.generateEnvContent(
+                    authConfig.tableName, { useJwt: authConfig.useJwt !== false }
                 );
                 serverCode += '\n\n';
             }

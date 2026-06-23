@@ -333,16 +333,15 @@ function activate(context) {
             }
 
             if (!sqlText) {
-                // Try to find full multi-line CREATE TABLE near cursor
-                for (let line = editor.selection.active.line; line >= 0; line--) {
+                // Search the ENTIRE document for a CREATE TABLE block (any cursor position)
+                for (let line = 0; line < editor.document.lineCount; line++) {
                     const text = editor.document.lineAt(line).text;
-                    if (/^CREATE\s+TABLE/i.test(text.trim())) {
-                        // Found the opening line — collect lines down to the closing paren
+                    if (/^\s*CREATE\s+TABLE\b/i.test(text)) {
                         const lines = [text];
                         for (let l = line + 1; l < editor.document.lineCount; l++) {
                             const nextLine = editor.document.lineAt(l).text;
                             lines.push(nextLine);
-                            if (nextLine.trim().endsWith(')') || nextLine.trim().endsWith(');')) {
+                            if (/\)\s*;?\s*$/.test(nextLine.trim())) {
                                 break;
                             }
                         }

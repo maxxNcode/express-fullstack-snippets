@@ -319,6 +319,349 @@ class SchemaRegistry {
         return tokens;
     }
 
+    /**
+     * Parse a MySQL CREATE TABLE statement into table name and field definitions.
+     * Handles MySQL-specific syntax:
+     *   - AUTO_INCREMENT
+     *   - VARCHAR(N), CHAR(N), NVARCHAR(N)
+     *   - INT(N), BIGINT, SMALLINT, TINYINT
+     *   - DECIMAL(M,N), FLOAT, DOUBLE
+     *   - ENGINE=InnoDB, DEFAULT CHARSET=utf8, etc.
+     *   - Backtick-quoted identifiers
+     *   - UNIQUE, INDEX, KEY, CONSTRAINT
+     *   - COMMENT '...'
+     * @param {string} sql - The MySQL CREATE TABLE statement
+     * @returns {{ tableName: string, fields: Array, rawSql: string }}
+     */
+    parseMySqlCreateTable(sql) {
+        sql = sql.trim();
+
+        // Remove ENGINE, DEFAULT CHARSET, COLLATE, AUTO_INCREMENT=N, ROW_FORMAT, etc.
+        sql = sql.replace(/\s+ENGINE\s*=\s*\w+/gi, '');
+        sql = sql.replace(/\s+DEFAULT\s+CHARSET\s*=\s*\w+/gi, '');
+        sql = sql.replace(/\s+COLLATE\s*=\s*\w+/gi, '');
+        sql = sql.replace(/\s+AUTO_INCREMENT\s*=\s*\d+/gi, '');
+        sql = sql.replace(/\s+ROW_FORMAT\s*=\s*\w+/gi, '');
+        sql = sql.replace(/\s+COMMENT\s*=\s*'[^']*'/gi, '');
+        sql = sql.replace(/\s+PACK_KEYS\s*=\s*\d+/gi, '');
+        sql = sql.replace(/\s+STATS\w+\s*=\s*\d+/gi, '');
+
+        // Parse table name and columns
+        const tableMatch = sql.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(([\s\S]*)\)\s*;?\s*$/i);
+        if (!tableMatch) {
+            throw new Error('Invalid MySQL CREATE TABLE syntax');
+        }
+
+        const tableName = tableMatch[1];
+        const columnsSection = tableMatch[2];
+        const colDefs = this._splitSQLColumns(columnsSection);
+        const fields = [];
+
+        for (const colDef of colDefs) {
+            const trimmed = colDef.trim();
+            if (!trimmed) continue;
+
+            // Skip table-level constraints (PRIMARY KEY, FOREIGN KEY, INDEX, UNIQUE KEY, KEY, CONSTRAINT, CHECK)
+            if (/^(PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE\s+(KEY|INDEX)?|INDEX|KEY|CONSTRAINT|CHECK|FULLTEXT|SPATIAL)\b/i.test(trimmed)) {
+                continue;
+            }
+
+            const tokens = this._tokenizeColumnDef(trimmed);
+            if (tokens.length < 2) continue;
+
+            // Handle backtick-quoted field names
+            const rawName = tokens[0].replace(/`/g, '');
+            if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(rawName)) continue;
+
+            const field = { name: rawName, type: 'TEXT' };
+
+            // Determine SQL type — handle MySQL types
+            const typeToken = tokens[1].toUpperCase().replace(/\(.*\)/, ''); // Strip size params
+            if (/^(INTEGER|INT|BIGINT|SMALLINT|TINYINT|MEDIUMINT|INT2|INT8)$/.test(typeToken)) {
+                field.type = 'INTEGER';
+            } else if (/^(REAL|FLOAT|DOUBLE|NUMERIC|DECIMAL|NUMBER)$/.test(typeToken)) {
+                field.type = 'REAL';
+            } else if (/^(TEXT|VARCHAR|CHARACTER?|NVARCHAR|NCHAR|CLOB|LONGTEXT|MEDIUMTEXT|TINYTEXT|CHAR)$/.test(typeToken)) {
+                field.type = 'TEXT';
+            } else if (/^BLOB|LONGBLOB|MEDIUMBLOB|TINYBLOB|BINARY|VARBINARY$/.test(typeToken)) {
+                field.type = 'BLOB';
+            } else if (/^(DATE|DATETIME|TIMESTAMP|TIME|YEAR)$/.test(typeToken)) {
+                field.type = 'TEXT'; // SQLite doesn't have native date types
+            } else if (/^BOOLEAN|BOOL|BIT$/.test(typeToken)) {
+                field.type = 'INTEGER';
+            } else if (/^(SERIAL|BIGINT|UNSIGNED)/.test(typeToken)) {
+                field.type = 'INTEGER';
+            }
+
+            // Parse column constraints
+            for (let i = 2; i < tokens.length; i++) {
+                const t = tokens[i].toUpperCase();
+
+                // AUTO_INCREMENT => PK + autoincrement
+                if (/^AUTO_INCREMENT$/i.test(t)) {
+                    field.pk = true;
+                    field.autoIncrement = true;
+                    if (field.type === 'TEXT') field.type = 'INTEGER';
+                }
+
+                // PRIMARY KEY
+                if (t === 'PRIMARY' && tokens[i + 1]?.toUpperCase() === 'KEY') {
+                    field.pk = true;
+                    if (field.type === 'TEXT') field.type = 'INTEGER';
+                    i++;
+                }
+
+                // NOT NULL
+                if (t === 'NOT' && tokens[i + 1]?.toUpperCase() === 'NULL') {
+                    field.notNull = true;
+                    i++;
+                }
+
+                // DEFAULT value
+                if (t === 'DEFAULT') {
+                    let dv = tokens[++i];
+                    if (dv.toUpperCase() === 'NULL') {
+                        field.default = null;
+                    } else if (dv.toUpperCase() === 'CURRENT_TIMESTAMP') {
+                        field.default = 'CURRENT_TIMESTAMP';
+                    } else {
+                        if ((dv.startsWith("'") && dv.endsWith("'")) || (dv.startsWith('"') && dv.endsWith('"'))) {
+                            dv = dv.slice(1, -1);
+                        }
+                        field.default = dv;
+                    }
+                }
+
+                // UNIQUE
+                if (t === 'UNIQUE') {
+                    field.unique = true;
+                }
+
+                // REFERENCES (inline FK)
+                if (t === 'REFERENCES') {
+                    const refMatch = trimmed.match(/REFERENCES\s+`?(\w+)`?\s*\(`?(\w+)`?\)/i);
+                    if (refMatch) {
+                        field.fk = { table: refMatch[1], field: refMatch[2] };
+                    }
+                }
+
+                // UNSIGNED — just skip, SQLite doesn't have unsigned
+                if (t === 'UNSIGNED') {
+                    continue;
+                }
+
+                // COMMENT — skip
+                if (t === 'COMMENT') {
+                    i++; // Skip the comment string
+                }
+            }
+
+            fields.push(field);
+        }
+
+        if (fields.length === 0) {
+            throw new Error('No columns found in MySQL CREATE TABLE statement');
+        }
+
+        // Check if any field has a size suffix like VARCHAR(255) and update type
+        for (const colDef of colDefs) {
+            const trimmed = colDef.trim();
+            const tokens = this._tokenizeColumnDef(trimmed);
+            if (tokens.length >= 2) {
+                const rawName = tokens[0].replace(/`/g, '');
+                const typePart = tokens[1];
+                const field = fields.find(f => f.name === rawName);
+                if (field && /VARCHAR|CHAR|NVARCHAR/i.test(typePart)) {
+                    field.type = 'TEXT';
+                }
+            }
+        }
+
+        return { tableName, fields, rawSql: sql };
+    }
+
+    /**
+     * Parse INSERT INTO statements from a MySQL SQL dump and generate
+     * equivalent INSERT statements for SQLite.
+     * Handles: INSERT INTO `table` (col1, col2) VALUES (v1, v2), (v3, v4);
+     * @param {string} sql - The SQL dump content
+     * @returns {Array<{ table: string, columns: string[], values: Array[] }>}
+     */
+    parseInsertStatements(sql) {
+        const results = [];
+        // Match INSERT INTO statements with optional backticks
+        const insertRegex = /INSERT\s+INTO\s+`?(\w+)`?\s*(?:\(([^)]+)\))?\s*VALUES\s*((?:\([^)]+\)\s*,?\s*)+);?/gi;
+        let match;
+
+        while ((match = insertRegex.exec(sql)) !== null) {
+            const tableName = match[1];
+            const columnsStr = match[2];
+            const valuesStr = match[3];
+
+            if (!columnsStr || !valuesStr) continue;
+
+            // Parse column names (strip backticks)
+            const columns = columnsStr.split(',').map(c => c.trim().replace(/`/g, ''));
+
+            // Parse all value tuples
+            const valueTuples = [];
+            const valueRegex = /\(([^)]+)\)/g;
+            let vMatch;
+            while ((vMatch = valueRegex.exec(valuesStr)) !== null) {
+                const rawValues = vMatch[1];
+                const parsed = this._parseSqlValues(rawValues);
+                valueTuples.push(parsed);
+            }
+
+            if (columns.length > 0 && valueTuples.length > 0) {
+                results.push({
+                    table: tableName,
+                    columns: columns,
+                    values: valueTuples
+                });
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * Generate SQLite-compatible INSERT statements from parsed INSERT data.
+     * @param {Array} inserts - Output from parseInsertStatements()
+     * @returns {string} SQLite-compatible INSERT SQL
+     */
+    generateSqliteInserts(inserts) {
+        let sql = '';
+        for (const insert of inserts) {
+            const colList = insert.columns.join(', ');
+            for (const values of insert.values) {
+                const quotedValues = values.map(v => {
+                    if (v === null || v === undefined || v.toUpperCase() === 'NULL') return 'NULL';
+                    if (v.toUpperCase() === 'CURRENT_TIMESTAMP') return "datetime('now')";
+                    if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+                    return "'" + v.replace(/'/g, "''") + "'";
+                }).join(', ');
+                sql += `INSERT INTO ${insert.table} (${colList}) VALUES (${quotedValues});\n`;
+            }
+        }
+        return sql;
+    }
+
+    /**
+     * Parse SQL values string handling quoted strings with commas inside.
+     */
+    _parseSqlValues(rawValues) {
+        const values = [];
+        let current = '';
+        let inString = false;
+        let stringChar = null;
+
+        for (let i = 0; i < rawValues.length; i++) {
+            const ch = rawValues[i];
+
+            if (inString) {
+                if (ch === stringChar && rawValues[i + 1] === stringChar) {
+                    current += ch;
+                    i++;
+                    continue;
+                }
+                if (ch === stringChar) {
+                    inString = false;
+                    continue;
+                }
+                current += ch;
+                continue;
+            }
+
+            if (ch === "'" || ch === '"') {
+                inString = true;
+                stringChar = ch;
+                continue;
+            }
+
+            if (ch === ',' && !inString) {
+                values.push(current.trim());
+                current = '';
+                continue;
+            }
+
+            current += ch;
+        }
+
+        if (current.trim()) {
+            values.push(current.trim());
+        }
+
+        return values;
+    }
+
+    /**
+     * Parse a full MySQL SQL dump file and produce schema + data.
+     * @param {string} sql - Complete SQL dump content
+     * @returns {{ tables: Array<{ tableName: string, fields: Array }>, inserts: Array, sqliteSchema: string, sqliteData: string }}
+     */
+    parseMySqlDump(sql) {
+        const tables = [];
+        const allInserts = [];
+        let sqliteSchema = '';
+        let sqliteData = '';
+
+        // Extract CREATE TABLE statements
+        const createRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[^;]+;/gi;
+        let match;
+        while ((match = createRegex.exec(sql)) !== null) {
+            try {
+                const { tableName, fields } = this.parseMySqlCreateTable(match[0]);
+                tables.push({ tableName, fields });
+            } catch (e) {
+                // Skip invalid CREATE TABLE statements
+                console.error('Failed to parse CREATE TABLE:', e.message);
+            }
+        }
+
+        // Extract INSERT INTO statements
+        const inserts = this.parseInsertStatements(sql);
+        allInserts.push(...inserts);
+
+        // Generate SQLite schema DDL
+        const { CodeGenerator } = require('./generator');
+        const gen = new CodeGenerator(this);
+
+        // Temporarily register tables to use the generator
+        for (const { tableName, fields } of tables) {
+            // Don't actually add to schema — just generate the SQL
+            // We'll create a temporary schema context
+            const tempSchema = {
+                getTable: (name) => {
+                    const t = tables.find(t => t.tableName === name);
+                    if (!t) return null;
+                    return { fields: t.fields };
+                },
+                getTables: () => tables.map(t => t.tableName)
+            };
+            const tempGen = new (require('./generator').CodeGenerator)(tempSchema);
+            // Override the schemaRegistry reference temporarily
+            gen.schemaRegistry = tempSchema;
+            try {
+                sqliteSchema += gen.generateCreateTable(tableName) + '\n\n';
+            } catch (e) {
+                sqliteSchema += `-- Error generating CREATE TABLE for ${tableName}: ${e.message}\n`;
+            }
+        }
+
+        // Generate SQLite INSERT statements
+        if (allInserts.length > 0) {
+            sqliteData = this.generateSqliteInserts(allInserts);
+        }
+
+        return {
+            tables,
+            inserts: allInserts,
+            sqliteSchema,
+            sqliteData
+        };
+    }
+
     parseInlineSpec(input) {
         const colonIdx = input.indexOf(':');
         if (colonIdx < 0) throw new Error('Format: TableName:fieldDef, fieldDef, ...');

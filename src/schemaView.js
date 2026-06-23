@@ -572,27 +572,41 @@ class SchemaViewProvider {
         const authGen = new AuthGenerator(this.schemaRegistry);
         const opts = options || {};
         let allCode = '';
+
+        const registerFields = this.schemaRegistry.getTable(tableName);
+        const allFields = registerFields ? registerFields.fields.map(f => f.name) : [];
+
         if (opts.generateRoute !== false) {
             allCode += authGen.generateLogin(tableName, identityFields, passwordField, statusField, opts);
             allCode += '\n\n';
         }
         if (opts.generateRegister) {
-            const table = this.schemaRegistry.getTable(tableName);
-            const allFields = table ? table.fields.map(f => f.name) : [];
-            allCode += authGen.generateRegister(tableName, allFields, passwordField, opts);
+            allCode += authGen.generateRegister(tableName, allFields, passwordField, { ...opts, identityFields });
             allCode += '\n\n';
         }
+        if (opts.generateMiddleware !== false && opts.useJwt !== false) {
+            allCode += authGen.generateAuthMiddleware(tableName, identityFields, opts);
+            allCode += '\n\n';
+        }
+        if (opts.generateEnv !== false && opts.useJwt !== false) {
+            allCode += authGen.generateEnvContent(tableName, opts);
+            allCode += '\n\n';
+        }
+        if (opts.generateAuthJs !== false && opts.useJwt !== false) {
+            allCode += authGen.generateAuthClientJs(opts);
+            allCode += '\n\n';
+        }
+        allCode += authGen.generateSetupGuide(tableName, identityFields, passwordField, opts);
+        allCode += '\n\n';
         if (opts.generateHtml !== false) {
             allCode += authGen.generateLoginFormHtml(tableName, identityFields, passwordField, opts);
             allCode += '\n\n';
         }
         if (opts.generateRegisterHtml) {
-            const table = this.schemaRegistry.getTable(tableName);
-            const allFields = table ? table.fields.map(f => f.name) : [];
             allCode += authGen.generateRegisterFormHtml(tableName, passwordField, opts);
             allCode += '\n\n';
         }
-        if (!allCode) {
+        if (!allCode.trim()) {
             allCode = '// Auth: Select at least one output option (route, register, or HTML)';
         }
         try {
@@ -611,11 +625,23 @@ class SchemaViewProvider {
         if (!this._panel) return;
         const { AuthGenerator } = require('./authGenerator');
         const authGen = new AuthGenerator(this.schemaRegistry);
-        const useBcryptVal = useBcrypt !== false; // default true
-        const code = authGen.generateLogin(tableName, identityFields, passwordField, statusField, { useJwt: true, useBcrypt: useBcryptVal });
+        const useBcryptVal = useBcrypt !== false;
+        const opts = { useJwt: true, useBcrypt: useBcryptVal };
+
+        const registerFields = this.schemaRegistry.getTable(tableName);
+        const allFields = registerFields ? registerFields.fields.map(f => f.name) : [];
+
+        let fullCode = '';
+        fullCode += authGen.generateLogin(tableName, identityFields, passwordField, statusField, opts) + '\n\n';
+        fullCode += authGen.generateRegister(tableName, allFields, passwordField, { ...opts, identityFields }) + '\n\n';
+        fullCode += authGen.generateAuthMiddleware(tableName, identityFields, opts) + '\n\n';
+        fullCode += authGen.generateEnvContent(tableName, opts) + '\n\n';
+        fullCode += authGen.generateAuthClientJs(opts) + '\n\n';
+        fullCode += authGen.generateSetupGuide(tableName, identityFields, passwordField, opts);
+
         this._panel.webview.postMessage({
             command: 'authPreviewResult',
-            code: code
+            code: fullCode
         });
     }
 
