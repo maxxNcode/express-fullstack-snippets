@@ -141,6 +141,7 @@ class AuthGenerator {
 
         code += "const jwt = require('jsonwebtoken');\n\n";
 
+        // --- authenticate middleware (single, simple version) ---
         code += '// --- JWT Verification Middleware ---\n';
         code += '// Attach to any route: app.get("/api/protected", authenticate, handler)\n';
         code += 'const authenticate = (req, res, next) => {\n';
@@ -164,55 +165,22 @@ class AuthGenerator {
         code += '  }\n';
         code += '};\n\n';
 
-        code += '// --- Token Blacklist (in-memory, resets on server restart) ---\n';
-        code += '// For production, use Redis or a DB table instead.\n';
-        code += 'const tokenBlacklist = new Set();\n\n';
-
+        // --- logout (simple; no blacklist) ---
         code += '// --- Logout Endpoint ---\n';
+        code += '// The client discards its tokens; the server simply acknowledges the logout.\n';
+        code += '// (For strict revocation, store tokens in a DB/Redis blacklist in production.)\n';
         code += "app.post('/api/auth/logout', (req, res) => {\n";
-        code += '  const header = req.headers.authorization;\n';
-        code += '  if (header && header.startsWith(\'Bearer \')) {\n';
-        code += '    const token = header.split(\' \')[1];\n';
-        code += '    tokenBlacklist.add(token);\n';
-        code += '  }\n';
-        code += '  res.json({ message: \'Logged out successfully\' });\n';
+        code += "  res.json({ message: 'Logged out successfully' });\n";
         code += '});\n\n';
 
-        code += '// --- Updated authenticate middleware with blacklist check ---\n';
-        code += '// Replace the basic authenticate above with this one if using blacklist\n';
-        code += 'const authenticateWithBlacklist = (req, res, next) => {\n';
-        code += '  const header = req.headers.authorization;\n';
-        code += '  if (!header || !header.startsWith(\'Bearer \')) {\n';
-        code += '    return res.status(401).json({ error: \'No token provided\' });\n';
-        code += '  }\n';
-        code += '  const token = header.split(\' \')[1];\n';
-        code += '  if (tokenBlacklist.has(token)) {\n';
-        code += '    return res.status(401).json({ error: \'Token revoked\' });\n';
-        code += '  }\n';
-        code += '  try {\n';
-        code += '    const decoded = jwt.verify(token, process.env.JWT_SECRET);\n';
-        code += '    if (decoded.type !== \'access\') {\n';
-        code += '      return res.status(401).json({ error: \'Invalid token type\' });\n';
-        code += '    }\n';
-        code += '    req.user = decoded;\n';
-        code += '    next();\n';
-        code += '  } catch (err) {\n';
-        code += '    if (err.name === \'TokenExpiredError\') {\n';
-        code += '      return res.status(401).json({ error: \'Token expired\', code: \'TOKEN_EXPIRED\' });\n';
-        code += '    }\n';
-        code += '    return res.status(401).json({ error: \'Invalid token\' });\n';
-        code += '  }\n';
-        code += '};\n\n';
-
+        // --- refresh ---
         code += '// --- Token Refresh Endpoint ---\n';
+        code += '// Exchange a valid refresh token for a new access + refresh token pair.\n';
         code += "app.post('/api/auth/refresh', (req, res) => {\n";
         code += '  try {\n';
         code += '    const { refreshToken } = req.body;\n';
         code += '    if (!refreshToken) {\n';
         code += '      return res.status(400).json({ error: \'Refresh token required\' });\n';
-        code += '    }\n';
-        code += '    if (tokenBlacklist.has(refreshToken)) {\n';
-        code += '      return res.status(401).json({ error: \'Token revoked\' });\n';
         code += '    }\n';
         code += '    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);\n';
         code += '    if (decoded.type !== \'refresh\') {\n';
@@ -234,31 +202,27 @@ class AuthGenerator {
         code += '  }\n';
         code += '});\n\n';
 
-        code += '// --- Rate Limiter for Auth Endpoints ---\n';
-        code += "const rateLimit = require('express-rate-limit');\n\n";
+        // --- rate limiter (optional, simple) ---
+        code += '// --- Rate Limiter for Auth Endpoints (optional but recommended) ---\n';
+        code += '// npm install express-rate-limit\n';
+        code += "// Uncomment to apply: app.use('/api/auth/login', authLimiter);\n";
+        code += "const rateLimit = require('express-rate-limit');\n";
         code += 'const authLimiter = rateLimit({\n';
-        code += '  windowMs: 15 * 60 * 1000,\n';
-        code += '  max: 10,\n';
-        code += "  message: { error: 'Too many attempts, please try again after 15 minutes' },\n";
-        code += "  standardHeaders: true,\n";
-        code += "  legacyHeaders: false,\n";
-        code += '});\n\n';
-        code += '// Apply to auth routes:\n';
-        code += "// app.use('/api/auth/login', authLimiter);\n";
-        code += "// app.use('/api/auth/register', authLimiter);\n\n";
-
-        code += '// --- CSRF Protection Setup ---\n';
-        code += "// Requires: npm install csurf\n";
-        code += "// const csrf = require('csurf');\n";
-        code += "// const csrfProtection = csrf({ cookie: true });\n";
-        code += "// app.use(csrfProtection);\n";
-        code += "// app.get('/api/auth/csrf-token', (req, res) => { res.json({ csrfToken: req.csrfToken() }); });\n";
+        code += '  windowMs: 15 * 60 * 1000, // 15 minutes\n';
+        code += '  max: 10, // max 10 attempts per window\n';
+        code += "  message: { error: 'Too many attempts, please try again after 15 minutes' }\n";
+        code += '});\n';
 
         return code;
     }
 
     generateLoginFormHtml(tableName, identityFields, passwordField, options = {}) {
         const useJwt = options.useJwt !== false;
+        // useAuthJs = true ONLY when the auth.js client library is actually generated
+        // (i.e. JWT is on). When false, the form inlines a plain fetch so the page
+        // is fully self-contained and works without auth.js.
+        const useAuthJs = options.useAuthJs !== undefined ? options.useAuthJs : useJwt;
+        const dashboardPath = options.dashboardPath || '/dashboard.html';
         const displayName = tableName.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
 
         const identityInputs = identityFields.map(f => {
@@ -270,9 +234,13 @@ class AuthGenerator {
         let html = '';
         html += '<!-- ========= Auth: Login Form ========= -->\n';
         html += '// SAVE THIS AS: login.html (place in your public/ folder)\n';
-        html += '// IMPORTANT: Include auth.js BEFORE this file:\n';
-        html += '//   <script src="auth.js"></script>\n';
-        html += '//   <script>redirectIfAuthenticated();</script>\n';
+        if (useAuthJs) {
+            html += '// IMPORTANT: Include auth.js BEFORE this file:\n';
+            html += '//   <script src="auth.js"></script>\n';
+            html += '//   <script>redirectIfAuthenticated();</script>\n';
+        } else {
+            html += '// Self-contained: no auth.js required. Calls /api/auth/login directly.\n';
+        }
         html += '// ===================================== -->\n';
         html += '<!DOCTYPE html>\n';
         html += '<html lang="en">\n';
@@ -280,8 +248,10 @@ class AuthGenerator {
         html += '  <meta charset="UTF-8">\n';
         html += '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n';
         html += '  <title>Login - ' + displayName + '</title>\n';
-        html += '  <script src="auth.js"></script>\n';
-        html += '  <script>redirectIfAuthenticated();</script>\n';
+        if (useAuthJs) {
+            html += '  <script src="auth.js"></script>\n';
+            html += '  <script>redirectIfAuthenticated();</script>\n';
+        }
         html += '  <style>\n';
         html += '    * { margin: 0; padding: 0; box-sizing: border-box; }\n';
         html += '    body { font-family: -apple-system, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; }\n';
@@ -311,12 +281,30 @@ class AuthGenerator {
         html += '  e.preventDefault();\n';
         html += "  const data = Object.fromEntries(new FormData(e.target));\n";
         html += "  const errorEl = document.getElementById('loginError');\n";
+        html += "  function showError(msg) { errorEl.textContent = msg; errorEl.style.display = 'block'; }\n";
         html += '  try {\n';
-        html += '    await login(data);\n';
-        html += '    redirectToDashboard();\n';
+        if (useAuthJs) {
+            // Use the auth.js client library (handles token storage + refresh)
+            html += '    await login(data);\n';
+            html += '    redirectToDashboard();\n';
+        } else {
+            // Self-contained: plain fetch, no auth.js dependency
+            html += "    const res = await fetch('/api/auth/login', {\n";
+            html += "      method: 'POST',\n";
+            html += "      headers: { 'Content-Type': 'application/json' },\n";
+            html += '      body: JSON.stringify(data)\n';
+            html += '    });\n';
+            html += '    const result = await res.json();\n';
+            html += '    if (!res.ok) throw new Error(result.error || \'Login failed\');\n';
+            if (useJwt) {
+                // JWT path but without auth.js: store tokens manually, then redirect
+                html += '    if (result.token) localStorage.setItem(\'token\', result.token);\n';
+                html += '    if (result.refreshToken) localStorage.setItem(\'refreshToken\', result.refreshToken);\n';
+            }
+            html += `    window.location.href = '${dashboardPath}';\n`;
+        }
         html += '  } catch (err) {\n';
-        html += "    errorEl.textContent = err.message;\n";
-        html += "    errorEl.style.display = 'block';\n";
+        html += '    showError(err.message);\n';
         html += '  }\n';
         html += '};\n';
         html += '</script>\n';
@@ -330,6 +318,8 @@ class AuthGenerator {
         const table = this.schemaRegistry.getTable(tableName);
         if (!table) return '<!-- Table not found -->';
 
+        const useJwt = options.useJwt !== false;
+        const useAuthJs = options.useAuthJs !== undefined ? options.useAuthJs : useJwt;
         const displayName = tableName.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
         const allFields = table.fields;
 
@@ -354,9 +344,13 @@ class AuthGenerator {
         let html = '';
         html += '<!-- ========= Auth: Register Form ========= -->\n';
         html += '// SAVE THIS AS: register.html (place in your public/ folder)\n';
-        html += '// IMPORTANT: Include auth.js BEFORE this file:\n';
-        html += '//   <script src="auth.js"></script>\n';
-        html += '//   <script>redirectIfAuthenticated();</script>\n';
+        if (useAuthJs) {
+            html += '// IMPORTANT: Include auth.js BEFORE this file:\n';
+            html += '//   <script src="auth.js"></script>\n';
+            html += '//   <script>redirectIfAuthenticated();</script>\n';
+        } else {
+            html += '// Self-contained: no auth.js required. Calls /api/auth/register directly.\n';
+        }
         html += '// ========================================= -->\n';
         html += '<!DOCTYPE html>\n';
         html += '<html lang="en">\n';
@@ -364,8 +358,10 @@ class AuthGenerator {
         html += '  <meta charset="UTF-8">\n';
         html += '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n';
         html += '  <title>Register - ' + displayName + '</title>\n';
-        html += '  <script src="auth.js"></script>\n';
-        html += '  <script>redirectIfAuthenticated();</script>\n';
+        if (useAuthJs) {
+            html += '  <script src="auth.js"></script>\n';
+            html += '  <script>redirectIfAuthenticated();</script>\n';
+        }
         html += '  <style>\n';
         html += '    * { margin: 0; padding: 0; box-sizing: border-box; }\n';
         html += '    body { font-family: -apple-system, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; }\n';
@@ -394,12 +390,24 @@ class AuthGenerator {
         html += '  e.preventDefault();\n';
         html += '  const data = Object.fromEntries(new FormData(e.target));\n';
         html += "  const errorEl = document.getElementById('registerError');\n";
+        html += "  function showError(msg) { errorEl.textContent = msg; errorEl.style.display = 'block'; }\n";
         html += '  try {\n';
-        html += '    await register(data);\n';
-        html += "    window.location.href = '/login.html';\n";
+        if (useAuthJs) {
+            html += '    await register(data);\n';
+            html += "    window.location.href = '/login.html';\n";
+        } else {
+            // Self-contained: plain fetch, no auth.js dependency
+            html += "    const res = await fetch('/api/auth/register', {\n";
+            html += "      method: 'POST',\n";
+            html += "      headers: { 'Content-Type': 'application/json' },\n";
+            html += '      body: JSON.stringify(data)\n';
+            html += '    });\n';
+            html += '    const result = await res.json();\n';
+            html += '    if (!res.ok) throw new Error(result.error || \'Registration failed\');\n';
+            html += "    window.location.href = '/login.html';\n";
+        }
         html += '  } catch (err) {\n';
-        html += "    errorEl.textContent = err.message;\n";
-        html += "    errorEl.style.display = 'block';\n";
+        html += '    showError(err.message);\n';
         html += '  }\n';
         html += '};\n';
         html += '</script>\n';
@@ -440,52 +448,81 @@ class AuthGenerator {
         const useJwt = options.useJwt !== false;
         const useBcrypt = options.useBcrypt !== false;
 
+        // Detect which sections were actually generated so the guide only mentions them.
+        const genLoginRoute   = options.generateRoute !== false;
+        const genRegisterRoute = !!options.generateRegister;
+        const genMiddleware    = useJwt && (genLoginRoute || genRegisterRoute);
+        const genEnv           = genMiddleware;
+        const genAuthJs        = options.useAuthJs !== false && useJwt && (options.generateHtml !== false || !!options.generateRegisterHtml);
+        const genLoginHtml     = options.generateHtml !== false;
+        const genRegisterHtml  = !!options.generateRegisterHtml;
+
+        // Build npm install list (only what's actually needed)
+        const deps = ['express', 'better-sqlite3', 'cors', 'dotenv'];
+        if (useJwt) deps.push('jsonwebtoken');
+        if (useBcrypt) deps.push('bcrypt');
+
         let code = '';
         code += '/*\n';
         code += ' * ======================= SETUP INSTRUCTIONS =======================\n';
-        code += ' * Follow these steps to integrate the generated auth code:\n';
+        code += ' * Follow these steps to integrate the generated auth code.\n';
+        code += ' * Only the items you selected are listed below.\n';
         code += ' * ==================================================================\n';
         code += ' *\n';
         code += ' * 1. INSTALL DEPENDENCIES\n';
         code += ' *    Run in your project root:\n';
-        code += ` *      npm install express better-sqlite3 cors${useJwt ? ' jsonwebtoken' : ''}${useBcrypt ? ' bcrypt' : ''} express-rate-limit dotenv\n`;
+        code += ` *      npm install ${deps.join(' ')}\n`;
         code += ' *\n';
-        code += ' * 2. CREATE .env FILE\n';
-        code += ' *    Create a .env file in project root with:\n';
-        if (useJwt) {
-            code += ' *      JWT_SECRET=<random 64-char hex string>\n';
-            code += ' *      JWT_REFRESH_SECRET=<another random string>\n';
-        }
-        code += ' *      PORT=3000\n';
-        code += ' *      DB_PATH=data.db\n';
-        code += ' *\n';
-        code += ' * 3. ADD dotenv TO server.js (at the very top, before anything else)\n';
+        code += ' * 2. ADD dotenv TO server.js (at the very top, before anything else)\n';
         code += ' *      require("dotenv").config();\n';
         code += ' *\n';
-        code += ' * 4. PLACE THE GENERATED CODE\n';
-        code += ' *    - Login route  -> paste into server.js (after db setup, before app.listen)\n';
-        code += ' *    - Register route -> paste into server.js\n';
-        code += ' *    - Auth middleware -> paste into server.js (before protected routes)\n';
-        code += ' *    - Login HTML    -> paste into login.html <body>\n';
-        code += ' *    - Register HTML -> paste into register.html <body>\n';
-        if (useJwt) {
+
+        let step = 3;
+
+        if (genEnv) {
+            code += ` * ${step}. CREATE .env FILE\n`;
+            code += ' *    Create a .env file in project root with:\n';
+            code += ' *      PORT=3000\n';
+            code += ' *      DB_PATH=data.db\n';
+            if (useJwt) {
+                code += ' *      JWT_SECRET=<random 64-char hex string>\n';
+                code += ' *      JWT_REFRESH_SECRET=<another random string>\n';
+            }
             code += ' *\n';
-            code += ' * 5. PROTECT ROUTES WITH MIDDLEWARE\n';
-            code += ' *    Add "authenticate" middleware to routes that need login:\n';
-            code += ' *      const { authenticate } = require("./middleware/auth");\n';
-            code += ' *      app.get("/api/protected", authenticate, handler);\n';
-            code += ' *\n';
-            code += ' * 6. RATE LIMITING\n';
-            code += ' *    Uncomment the app.use() lines for authLimiter to enable.\n';
+            step++;
         }
-        code += ' *\n';
-        code += ' * 7. REGISTER THE TABLE\n';
+
+        // List only the sections the user actually generated
+        if (genLoginRoute || genRegisterRoute || genMiddleware) {
+            code += ` * ${step}. SERVER CODE (paste into server.js)\n`;
+            if (genLoginRoute)
+                code += ' *    - Login route      -> paste after db setup, before app.listen\n';
+            if (genRegisterRoute)
+                code += ' *    - Register route   -> paste after db setup, before app.listen\n';
+            if (genMiddleware) {
+                code += ' *    - Auth middleware   -> paste before any protected routes\n';
+                code += ' *      Then use it: app.get("/api/items", authenticate, handler);\n';
+            }
+            code += ' *\n';
+            step++;
+        }
+
+        if (genLoginHtml || genRegisterHtml || genAuthJs) {
+            code += ` * ${step}. CLIENT FILES (place in your public/ folder)\n`;
+            if (genAuthJs)
+                code += ' *    - auth.js          -> save as public/auth.js\n';
+            if (genLoginHtml)
+                code += ' *    - Login form       -> save as public/login.html\n';
+            if (genRegisterHtml)
+                code += ' *    - Register form    -> save as public/register.html\n';
+            code += ' *\n';
+            step++;
+        }
+
+        code += ` * ${step}. CREATE THE DATABASE TABLE\n`;
         code += ' *    Make sure you have registered the "' + tableName + '" table\n';
         code += ' *    using the Schema Visualizer or njs:register command.\n';
-        code += ' *\n';
-        code += ' * 8. CREATE THE DATABASE TABLE\n';
-        code += ' *    Use the generated CREATE TABLE SQL or have your app create\n';
-        code += ' *    the table on startup via db.exec().\n';
+        code += ' *    Then generate the CREATE TABLE SQL from the Tables tab.\n';
         code += ' * ==================================================================\n';
         code += ' */\n';
 

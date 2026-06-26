@@ -208,7 +208,37 @@ class SchemaViewProvider {
                         await this._handleGenerateAuth(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField, msg.options);
                         break;
                     case 'previewAuthSql':
-                        this._handlePreviewAuthSql(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField, msg.useBcrypt);
+                        this._handlePreviewAuthSql(msg.tableName, msg.identityFields, msg.passwordField, msg.statusField, msg.useBcrypt, msg.options);
+                        break;
+                    case 'addRule':
+                        await this._handleAddRule(msg.rule);
+                        break;
+                    case 'removeRule':
+                        await this._handleRemoveRule(msg.ruleIndex);
+                        break;
+                    case 'updateRule':
+                        await this._handleUpdateRule(msg.ruleIndex, msg.rule);
+                        break;
+                    case 'previewRules':
+                        this._handlePreviewRules();
+                        break;
+                    case 'generateRules':
+                        await this._handleGenerateRules();
+                        break;
+                    case 'generateApp':
+                        await this._handleGenerateApp(msg.tableConfigs, msg.authConfig, msg.options, msg.includeRules);
+                        break;
+                    case 'addActionRoute':
+                        await this._handleAddActionRoute(msg.route);
+                        break;
+                    case 'removeActionRoute':
+                        await this._handleRemoveActionRoute(msg.routeIndex);
+                        break;
+                    case 'previewActionRoute':
+                        this._handlePreviewActionRoute(msg.route);
+                        break;
+                    case 'generateActionRoute':
+                        await this._handleGenerateActionRoute(msg.route);
                         break;
                 }
             },
@@ -570,42 +600,79 @@ class SchemaViewProvider {
         }
         const { AuthGenerator } = require('./authGenerator');
         const authGen = new AuthGenerator(this.schemaRegistry);
+
+        // --- Resolve what the user actually asked for (defaults match the UI) ---
         const opts = options || {};
+        const useJwt = opts.useJwt !== false;          // default ON
+        const useBcrypt = opts.useBcrypt !== false;     // default ON
+        const genLoginRoute = opts.generateRoute !== false;        // default ON
+        const genRegisterRoute = !!opts.generateRegister;          // default OFF
+        const genLoginHtml = opts.generateHtml !== false;          // default ON
+        const genRegisterHtml = !!opts.generateRegisterHtml;       // default OFF
+
+        const baseOpts = { useJwt, useBcrypt };
+
+        // --- Dependency resolution so generated code is always self-consistent ---
+        // Any server route that signs/verifies JWT needs middleware + .env
+        const hasServerRoute = genLoginRoute || genRegisterRoute;
+        const genMiddleware = useJwt && hasServerRoute;
+        const genEnv = useJwt && hasServerRoute;
+        // HTML forms use auth.js (token storage + refresh) when JWT is on.
+        // When JWT is off, the forms are self-contained (inline fetch).
+        const hasAnyHtml = genLoginHtml || genRegisterHtml;
+        const genAuthJs = useJwt && hasAnyHtml;
+        const useAuthJs = genAuthJs; // tells HTML whether auth.js is present
+
         let allCode = '';
 
-        const registerFields = this.schemaRegistry.getTable(tableName);
-        const allFields = registerFields ? registerFields.fields.map(f => f.name) : [];
-
-        if (opts.generateRoute !== false) {
-            allCode += authGen.generateLogin(tableName, identityFields, passwordField, statusField, opts);
+        // 1. Server: login route
+        if (genLoginRoute) {
+            allCode += authGen.generateLogin(tableName, identityFields, passwordField, statusField, baseOpts);
             allCode += '\n\n';
         }
-        if (opts.generateRegister) {
-            allCode += authGen.generateRegister(tableName, allFields, passwordField, { ...opts, identityFields });
+        // 2. Server: register route
+        if (genRegisterRoute) {
+            const registerFields = this.schemaRegistry.getTable(tableName);
+            const allFields = registerFields ? registerFields.fields.map(f => f.name) : [];
+            allCode += authGen.generateRegister(tableName, allFields, passwordField, { ...baseOpts, identityFields });
             allCode += '\n\n';
         }
-        if (opts.generateMiddleware !== false && opts.useJwt !== false) {
-            allCode += authGen.generateAuthMiddleware(tableName, identityFields, opts);
+        // 3. Server: middleware (authenticate, logout, refresh, rate limiter)
+        if (genMiddleware) {
+            allCode += authGen.generateAuthMiddleware(tableName, identityFields, baseOpts);
             allCode += '\n\n';
         }
-        if (opts.generateEnv !== false && opts.useJwt !== false) {
-            allCode += authGen.generateEnvContent(tableName, opts);
+        // 4. Config: .env (JWT secrets, port, db path)
+        if (genEnv) {
+            allCode += authGen.generateEnvContent(tableName, baseOpts);
             allCode += '\n\n';
         }
-        if (opts.generateAuthJs !== false && opts.useJwt !== false) {
-            allCode += authGen.generateAuthClientJs(opts);
+        // 5. Client: auth.js (only when HTML + JWT — the HTML depends on it)
+        if (genAuthJs) {
+            allCode += authGen.generateAuthClientJs(baseOpts);
             allCode += '\n\n';
         }
-        allCode += authGen.generateSetupGuide(tableName, identityFields, passwordField, opts);
+        // 6. Setup guide (always — adapts to list only what was generated)
+        allCode += authGen.generateSetupGuide(tableName, identityFields, passwordField, {
+            ...baseOpts,
+            generateRoute: genLoginRoute,
+            generateRegister: genRegisterRoute,
+            generateHtml: genLoginHtml,
+            generateRegisterHtml: genRegisterHtml,
+            useAuthJs
+        });
         allCode += '\n\n';
-        if (opts.generateHtml !== false) {
-            allCode += authGen.generateLoginFormHtml(tableName, identityFields, passwordField, opts);
+        // 7. HTML: login form (self-contained if no auth.js)
+        if (genLoginHtml) {
+            allCode += authGen.generateLoginFormHtml(tableName, identityFields, passwordField, { ...baseOpts, useAuthJs });
             allCode += '\n\n';
         }
-        if (opts.generateRegisterHtml) {
-            allCode += authGen.generateRegisterFormHtml(tableName, passwordField, opts);
+        // 8. HTML: register form (self-contained if no auth.js)
+        if (genRegisterHtml) {
+            allCode += authGen.generateRegisterFormHtml(tableName, passwordField, { ...baseOpts, useAuthJs });
             allCode += '\n\n';
         }
+
         if (!allCode.trim()) {
             allCode = '// Auth: Select at least one output option (route, register, or HTML)';
         }
@@ -621,23 +688,56 @@ class SchemaViewProvider {
         }
     }
 
-    _handlePreviewAuthSql(tableName, identityFields, passwordField, statusField, useBcrypt) {
+    _handlePreviewAuthSql(tableName, identityFields, passwordField, statusField, useBcrypt, options) {
         if (!this._panel) return;
         const { AuthGenerator } = require('./authGenerator');
         const authGen = new AuthGenerator(this.schemaRegistry);
+        const opts = options || {};
+        const useJwt = opts.useJwt !== false;
         const useBcryptVal = useBcrypt !== false;
-        const opts = { useJwt: true, useBcrypt: useBcryptVal };
+        const baseOpts = { useJwt, useBcrypt: useBcryptVal };
+
+        // Preview respects the same checkboxes as Generate, so what you see == what you get.
+        const genLoginRoute = opts.generateRoute !== false;
+        const genRegisterRoute = !!opts.generateRegister;
+        const genLoginHtml = opts.generateHtml !== false;
+        const genRegisterHtml = !!opts.generateRegisterHtml;
+        const hasServerRoute = genLoginRoute || genRegisterRoute;
+        const hasAnyHtml = genLoginHtml || genRegisterHtml;
+        const genAuthJs = useJwt && hasAnyHtml;
+        const useAuthJs = genAuthJs;
 
         const registerFields = this.schemaRegistry.getTable(tableName);
         const allFields = registerFields ? registerFields.fields.map(f => f.name) : [];
 
         let fullCode = '';
-        fullCode += authGen.generateLogin(tableName, identityFields, passwordField, statusField, opts) + '\n\n';
-        fullCode += authGen.generateRegister(tableName, allFields, passwordField, { ...opts, identityFields }) + '\n\n';
-        fullCode += authGen.generateAuthMiddleware(tableName, identityFields, opts) + '\n\n';
-        fullCode += authGen.generateEnvContent(tableName, opts) + '\n\n';
-        fullCode += authGen.generateAuthClientJs(opts) + '\n\n';
-        fullCode += authGen.generateSetupGuide(tableName, identityFields, passwordField, opts);
+        if (genLoginRoute) {
+            fullCode += authGen.generateLogin(tableName, identityFields, passwordField, statusField, baseOpts) + '\n\n';
+        }
+        if (genRegisterRoute) {
+            fullCode += authGen.generateRegister(tableName, allFields, passwordField, { ...baseOpts, identityFields }) + '\n\n';
+        }
+        if (useJwt && hasServerRoute) {
+            fullCode += authGen.generateAuthMiddleware(tableName, identityFields, baseOpts) + '\n\n';
+            fullCode += authGen.generateEnvContent(tableName, baseOpts) + '\n\n';
+        }
+        if (genAuthJs) {
+            fullCode += authGen.generateAuthClientJs(baseOpts) + '\n\n';
+        }
+        fullCode += authGen.generateSetupGuide(tableName, identityFields, passwordField, {
+            ...baseOpts,
+            generateRoute: genLoginRoute,
+            generateRegister: genRegisterRoute,
+            generateHtml: genLoginHtml,
+            generateRegisterHtml: genRegisterHtml,
+            useAuthJs
+        });
+        if (genLoginHtml) {
+            fullCode += '\n\n' + authGen.generateLoginFormHtml(tableName, identityFields, passwordField, { ...baseOpts, useAuthJs });
+        }
+        if (genRegisterHtml) {
+            fullCode += '\n\n' + authGen.generateRegisterFormHtml(tableName, passwordField, { ...baseOpts, useAuthJs });
+        }
 
         this._panel.webview.postMessage({
             command: 'authPreviewResult',
@@ -801,7 +901,7 @@ class SchemaViewProvider {
         }
     }
 
-    async _handleGenerateApp(tableConfigs, authConfig, options) {
+    async _handleGenerateApp(tableConfigs, authConfig, options, includeRules) {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             vscode.window.showErrorMessage('njs: Open a file first to insert generated code');
@@ -811,6 +911,14 @@ class SchemaViewProvider {
         const appGen = new AppGenerator(this.schemaRegistry);
         const result = appGen.generateApp(tableConfigs, authConfig, options || {});
         let allCode = result.server;
+        if (includeRules) {
+            const rules = this.schemaRegistry.getRules();
+            if (rules.length > 0) {
+                const { RuleEngine } = require('./ruleEngine');
+                const engine = new RuleEngine(this.schemaRegistry);
+                allCode += '\n\n' + engine.generateAll(rules, []);
+            }
+        }
         if (result.html) allCode += '\n\n' + result.html;
         if (result.js) allCode += '\n\n' + result.js;
         try {
@@ -819,12 +927,251 @@ class SchemaViewProvider {
             const success = await vscode.workspace.applyEdit(edit);
             if (success) {
                 const tableCount = tableConfigs ? tableConfigs.length : 0;
-                const label = authConfig ? ' with Auth' : '';
+                const extras = [];
+                if (authConfig) extras.push('Auth');
+                if (includeRules) extras.push('Rules');
+                const label = extras.length > 0 ? ' with ' + extras.join(' + ') : '';
                 vscode.window.showInformationMessage(`njs: Generated app code for ${tableCount} tables${label}`);
             }
         } catch (err) {
             vscode.window.showErrorMessage(`njs: ${err.message}`);
         }
+    }
+
+    async _handleAddRule(rule) {
+        try {
+            await this.schemaRegistry.addRule(rule);
+            vscode.window.showInformationMessage(`njs: Rule added (${rule.type})`);
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleRemoveRule(ruleIndex) {
+        try {
+            await this.schemaRegistry.removeRule(ruleIndex);
+            vscode.window.showInformationMessage('njs: Rule removed');
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleUpdateRule(ruleIndex, rule) {
+        try {
+            await this.schemaRegistry.updateRule(ruleIndex, rule);
+            vscode.window.showInformationMessage('njs: Rule updated');
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    _handlePreviewRules() {
+        if (!this._panel) return;
+        const rules = this.schemaRegistry.getRules();
+        const { RuleEngine } = require('./ruleEngine');
+        const engine = new RuleEngine(this.schemaRegistry);
+        let code = '';
+        if (rules.length === 0) {
+            code = '// No business rules defined yet.\n// Add rules using the form above.';
+        } else {
+            code = engine.generateAll(rules, []);
+        }
+        this._panel.webview.postMessage({ command: 'rulesPreviewResult', code });
+    }
+
+    async _handleGenerateRules() {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('njs: Open a file first to insert generated code');
+            return;
+        }
+        const rules = this.schemaRegistry.getRules();
+        if (rules.length === 0) {
+            vscode.window.showErrorMessage('njs: No rules defined');
+            return;
+        }
+        const { RuleEngine } = require('./ruleEngine');
+        const engine = new RuleEngine(this.schemaRegistry);
+        const code = engine.generateAll(rules, []);
+
+        try {
+            const edit = new vscode.WorkspaceEdit();
+            edit.insert(editor.document.uri, editor.selection.active, code);
+            const success = await vscode.workspace.applyEdit(edit);
+            if (success) {
+                vscode.window.showInformationMessage(`njs: Generated ${rules.length} business rules`);
+            } else {
+                vscode.window.showErrorMessage('njs: Failed to insert code - try clicking in the editor first');
+            }
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleAddActionRoute(route) {
+        try {
+            await this.schemaRegistry.addActionRoute(route);
+            vscode.window.showInformationMessage(`njs: Action route "${route.name}" added`);
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleRemoveActionRoute(routeIndex) {
+        try {
+            await this.schemaRegistry.removeActionRoute(routeIndex);
+            vscode.window.showInformationMessage('njs: Action route removed');
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    _handlePreviewActionRoute(route) {
+        if (!this._panel) return;
+        const code = this._generateActionCode(route);
+        this._panel.webview.postMessage({ command: 'actionRoutePreviewResult', code });
+    }
+
+    async _handleGenerateActionRoute(route) {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('njs: Open a file first to insert generated code');
+            return;
+        }
+        const code = this._generateActionCode(route);
+        try {
+            const edit = new vscode.WorkspaceEdit();
+            edit.insert(editor.document.uri, editor.selection.active, code);
+            const success = await vscode.workspace.applyEdit(edit);
+            if (success) {
+                vscode.window.showInformationMessage(`njs: Generated action route "${route.name}"`);
+            } else {
+                vscode.window.showErrorMessage('njs: Failed to insert code - try clicking in the editor first');
+            }
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    _generateActionCode(route) {
+        if (!route || !route.name || !route.targetTable) {
+            return '// Error: Route name and target table are required';
+        }
+
+        const routePath = `/api/${route.name}`;
+        const method = (route.method || 'POST').toLowerCase();
+        const targetTable = route.targetTable;
+        const table = this.schemaRegistry.getTable(targetTable);
+        if (!table) return `// Error: Table "${targetTable}" not found`;
+
+        const pk = table.fields.find(f => f.pk);
+        const pkName = pk ? pk.name : 'id';
+
+        // Find the field that stores the user identity (e.g., voterID, customerID)
+        const identityField = route.identityField || '';
+
+        // Find non-PK fields for the insert
+        const insertFields = table.fields.filter(f => !f.pk);
+        const insertFieldNames = insertFields.map(f => f.name);
+
+        let code = '';
+        code += `// ======================= Action Route: ${route.name} =======================\n`;
+        code += `// ${route.description || 'Custom action route'}\n`;
+        code += `// =================================================================\n\n`;
+
+        // Imports
+        if (route.useJwt !== false) {
+            code += `const jwt = require('jsonwebtoken');\n`;
+        }
+        code += `\n`;
+
+        // Route definition
+        code += `app.post('${routePath}', `;
+        if (route.useJwt !== false) {
+            code += `authenticate, `;
+        }
+        code += `(req, res) => {\n`;
+        code += `  try {\n`;
+
+        // Get identity from JWT or body
+        if (identityField && route.useJwt !== false) {
+            code += `    const ${identityField} = req.user.id;\n`;
+            code += `    const { ${insertFieldNames.filter(f => f !== identityField).join(', ')} } = req.body;\n`;
+        } else {
+            code += `    const { ${insertFieldNames.join(', ')} } = req.body;\n`;
+        }
+
+        code += `\n`;
+
+        // Pre-checks
+        if (route.preChecks && route.preChecks.length > 0) {
+            code += `    // --- Pre-checks ---\n`;
+            for (let i = 0; i < route.preChecks.length; i++) {
+                const check = route.preChecks[i];
+                code += `    // Check ${i + 1}: ${check.description || check.checkField + ' ' + check.operator + ' ' + check.checkValue}\n`;
+                code += `    const row${i} = db.prepare('SELECT ${check.checkField} FROM ${check.checkTable} WHERE ${check.identityField || identityField} = ?').get(${check.identityField || identityField});\n`;
+                if (check.operator === '=') {
+                    code += `    if (!row${i} || String(row${i}.${check.checkField}) !== String('${check.checkValue}')) {\n`;
+                } else if (check.operator === '!=') {
+                    code += `    if (row${i} && String(row${i}.${check.checkField}) === String('${check.checkValue}')) {\n`;
+                } else if (check.operator === '>') {
+                    code += `    if (row${i} && row${i}.${check.checkField} > ${check.checkValue}) {\n`;
+                } else if (check.operator === '<') {
+                    code += `    if (row${i} && row${i}.${check.checkField} < ${check.checkValue}) {\n`;
+                }
+                code += `      return res.status(403).json({ error: '${check.errorMessage || "Check failed"}' });\n`;
+                code += `    }\n\n`;
+            }
+        }
+
+        // Limit checks
+        if (route.limitChecks && route.limitChecks.length > 0) {
+            code += `    // --- Limit checks ---\n`;
+            for (let i = 0; i < route.limitChecks.length; i++) {
+                const limit = route.limitChecks[i];
+                code += `    // Limit ${i + 1}: ${limit.description || 'count check'}\n`;
+                code += `    const count${i} = db.prepare('SELECT COUNT(*) as cnt FROM ${limit.countTable || targetTable} WHERE ${limit.groupField} = ?').get(${limit.groupField});\n`;
+                code += `    const limitVal${i} = db.prepare('SELECT ${limit.limitField} FROM ${limit.limitTable} WHERE ${limit.limitField} IS NOT NULL LIMIT 1').get();\n`;
+                code += `    if (count${i} && limitVal${i} && count${i}.cnt >= limitVal${i}.${limit.limitField}) {\n`;
+                code += `      return res.status(403).json({ error: '${limit.errorMessage || "Limit exceeded"}' });\n`;
+                code += `    }\n\n`;
+            }
+        }
+
+        // Insert the record
+        code += `    // --- Insert record ---\n`;
+        if (identityField && route.useJwt !== false) {
+            const otherFields = insertFieldNames.filter(f => f !== identityField);
+            code += `    const result = db.prepare('INSERT INTO ${targetTable} (${insertFieldNames.join(', ')}) VALUES (${insertFieldNames.map(() => '?').join(', ')})').run(${insertFieldNames.map(f => f === identityField ? identityField : f).join(', ')});\n`;
+        } else {
+            code += `    const result = db.prepare('INSERT INTO ${targetTable} (${insertFieldNames.join(', ')}) VALUES (${insertFieldNames.map(() => '?').join(', ')})').run(${insertFieldNames.join(', ')});\n`;
+        }
+        code += `\n`;
+
+        // Post-actions
+        if (route.postActions && route.postActions.length > 0) {
+            code += `    // --- Post-actions ---\n`;
+            for (let i = 0; i < route.postActions.length; i++) {
+                const action = route.postActions[i];
+                code += `    // Action ${i + 1}: ${action.description || 'update ' + action.setTable + '.' + action.setField}\n`;
+                code += `    db.prepare('UPDATE ${action.setTable} SET ${action.setField} = ${action.setValue} WHERE ${action.whereField} = ?').run(${action.whereSourceField});\n`;
+            }
+            code += `\n`;
+        }
+
+        // Response
+        code += `    res.status(201).json({ message: '${route.name} successful', id: result.lastInsertRowid });\n`;
+        code += `  } catch (err) {\n`;
+        code += `    res.status(500).json({ error: err.message });\n`;
+        code += `  }\n`;
+        code += `});\n`;
+
+        return code;
     }
 
     _getHtml() {
@@ -870,6 +1217,58 @@ class SchemaViewProvider {
         }).join('\n');
 
         const hasTables = tables.length > 0;
+        const rules = this.schemaRegistry.getRules();
+        const ruleTypes = [
+            { value: 'preCheck', label: 'Pre-Check (validate before INSERT/UPDATE)' },
+            { value: 'limitCheck', label: 'Limit Check (prevent exceeding a limit)' },
+            { value: 'postAction', label: 'Post-Action (auto-update after INSERT)' }
+        ];
+        const ruleTypeOptions = ruleTypes.map(r =>
+            `<option value="${r.value}">${r.label}</option>`
+        ).join('');
+        const tableOptions = tables.map(t => `<option value="${t}">${t}</option>`).join('');
+        const savedRulesHtml = rules.length > 0 ? rules.map((rule, idx) => {
+            let desc = '';
+            if (rule.type === 'preCheck') {
+                desc = `Check ${rule.checkTable}.${rule.checkField} ${rule.operator} '${rule.checkValue}' before ${rule.action || 'INSERT'} on ${rule.targetTable}`;
+            } else if (rule.type === 'limitCheck') {
+                desc = `Limit ${rule.groupField} count < ${rule.limitField} from ${rule.limitTable} on ${rule.targetTable}`;
+            } else if (rule.type === 'postAction') {
+                desc = `After ${rule.action || 'INSERT'} on ${rule.targetTable}, SET ${rule.setTable}.${rule.setField} = ${rule.setValue}`;
+            }
+            const ruleJson = this._jsStr(JSON.stringify(rule));
+            return `<div class="saved-rule-item" onclick="editRule(${idx}, '${ruleJson}')" style="cursor:pointer;" title="Click to edit this rule">
+                <span><span class="sq-name">${rule.type}</span><span class="sq-info">${this._escapeHtml(desc)}</span></span>
+                <span class="sq-actions">
+                    <button class="btn btn-danger btn-sm" onclick="removeRule(${idx}, event)" title="Delete rule">${this._svgCloseIcon()}</button>
+                </span>
+            </div>`;
+        }).join('') : '<div class="qb-empty">No business rules defined yet</div>';
+
+        const fkFieldsHtml = tables.map(t => {
+            const table = this.schemaRegistry.getTable(t);
+            if (!table) return '';
+            return table.fields.map(f => {
+                return `<option value="${t}.${f.name}">${t}.${f.name} (${f.type})</option>`;
+            }).join('');
+        }).join('');
+
+        const actionRoutes = this.schemaRegistry.getActionRoutes();
+        const savedActionRoutesHtml = actionRoutes.length > 0 ? actionRoutes.map((route, idx) => {
+            let desc = `${route.method || 'POST'} /api/${route.name}`;
+            if (route.targetTable) desc += ` → ${route.targetTable}`;
+            if (route.identityField) desc += ` (auth: ${route.identityField})`;
+            const checkCount = (route.preChecks ? route.preChecks.length : 0) + (route.limitChecks ? route.limitChecks.length : 0);
+            const actionCount = route.postActions ? route.postActions.length : 0;
+            if (checkCount > 0) desc += ` | ${checkCount} checks`;
+            if (actionCount > 0) desc += ` | ${actionCount} actions`;
+            return `<div class="saved-rule-item">
+                <span><span class="sq-name" style="color:#6f6;">ROUTE</span><span class="sq-info">${this._escapeHtml(desc)}</span></span>
+                <span class="sq-actions">
+                    <button class="btn btn-danger btn-sm" onclick="removeActionRoute(${idx}, event)" title="Delete route">${this._svgCloseIcon()}</button>
+                </span>
+            </div>`;
+        }).join('') : '<div class="qb-empty">No action routes defined yet</div>';
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -885,6 +1284,8 @@ class SchemaViewProvider {
         <div class="tab-bar">
             <button class="tab-btn tab-active" onclick="switchTab('tables')" id="tabTables">Tables</button>
             <button class="tab-btn" onclick="switchTab('queries')" id="tabQueries">Query Builder</button>
+            <button class="tab-btn" onclick="switchTab('rules')" id="tabRules">Rules</button>
+            <button class="tab-btn" onclick="switchTab('actions')" id="tabActions">Actions</button>
             <button class="tab-btn" onclick="switchTab('auth')" id="tabAuth">Auth</button>
             <button class="tab-btn" onclick="switchTab('quickstart')" id="tabQuickstart">Quick Start</button>
         </div>
@@ -901,31 +1302,6 @@ class SchemaViewProvider {
     </div>
 
     <div id="tabTablesContent" class="tab-content tab-active">
-        <div class="help-section">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-                <h4 style="margin:0;">What is a Foreign Key?</h4>
-                <button class="help-toggle" onclick="toggleHelp(event)" title="Toggle help section">
-                    <span class="arrow" id="helpArrow">\u25BC</span> Hide
-                </button>
-            </div>
-            <div class="help-content" id="helpContent">
-                <p style="margin-top:10px;">
-                    A <strong>Foreign Key (FK)</strong> links a field in one table to the
-                    <span class="pk-highlight">Primary Key (PK)</span> of another table.
-                    It ensures <strong>data integrity</strong> - you cannot reference something that does not exist.
-                </p>
-                <p style="margin-top:6px;">
-                    <strong>Example:</strong>
-                    <code>Enrollments.studentID</code> -&gt; <code>Students.studentID</code>
-                    means every enrollment must belong to an <strong>existing</strong> student.
-                    Click the <span class="fk-highlight">FK icon</span> on a non-PK field to create these links.
-                </p>
-                <p style="margin-top:6px; color:#888;">
-                    <span class="tip-label">Tip:</span> Always register the <em>referenced</em> table first, then add the FK.
-                </p>
-            </div>
-        </div>
-
         ${hasTables ? `
         <div class="tables-container">
             ${tableCards}
@@ -1011,6 +1387,227 @@ class SchemaViewProvider {
             <h2>Register tables first</h2>
             <p>Go to the <strong>Tables</strong> tab, add some tables,<br>
             then come here to build custom queries.</p>
+        </div>
+        `}
+    </div>
+
+    <div id="tabRulesContent" class="tab-content">
+        ${hasTables ? `
+        <div class="rules-panel">
+            <h3>${this._svgGenerateIcon()} Business Rules Engine</h3>
+            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+                Define validation rules that run before/after database operations.
+                Rules enforce business logic like: "member must be active to book" or "auto-calculate total cost".
+            </p>
+
+            <div id="savedRules">${savedRulesHtml}</div>
+
+            <div class="rules-add-form" id="ruleForm">
+                <h4>Add New Rule</h4>
+                <div class="rule-row">
+                    <label>Rule Type:</label>
+                    <select id="ruleType" onchange="onRuleTypeChange(this.value)">
+                        ${ruleTypeOptions}
+                    </select>
+                </div>
+
+                <div id="preCheckFields">
+                    <div class="rule-row">
+                        <label>Target Table:</label>
+                        <select id="ruleTargetTable">${tableOptions}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Action:</label>
+                        <select id="ruleAction">
+                            <option value="INSERT">INSERT</option>
+                            <option value="UPDATE">UPDATE</option>
+                            <option value="DELETE">DELETE</option>
+                        </select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Check Table:</label>
+                        <select id="ruleCheckTable">${tableOptions}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Check Field:</label>
+                        <select id="ruleCheckField">${fkFieldsHtml}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Operator:</label>
+                        <select id="ruleOperator">
+                            <option value="=">= (equals)</option>
+                            <option value="!=">!= (not equals)</option>
+                            <option value=">">> (greater than)</option>
+                            <option value="<">< (less than)</option>
+                            <option value="LIKE">LIKE</option>
+                            <option value="IS NULL">IS NULL</option>
+                            <option value="IS NOT NULL">IS NOT NULL</option>
+                        </select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Check Value:</label>
+                        <input type="text" id="ruleCheckValue" placeholder="e.g. active, 0, false" />
+                    </div>
+                    <div class="rule-row">
+                        <label>Error Message:</label>
+                        <input type="text" id="ruleErrorMessage" placeholder="e.g. Member must be active to book" />
+                    </div>
+                </div>
+
+                <div id="limitCheckFields" style="display:none;">
+                    <div class="rule-row">
+                        <label>Target Table:</label>
+                        <select id="ruleLimitTargetTable">${tableOptions}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Count Field:</label>
+                        <select id="ruleCountField">${fkFieldsHtml}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Group By Field:</label>
+                        <select id="ruleGroupField">${fkFieldsHtml}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Limit Field (in referenced table):</label>
+                        <input type="text" id="ruleLimitField" placeholder="e.g. maxSlots, numOfPositions" />
+                    </div>
+                    <div class="rule-row">
+                        <label>Limit Table:</label>
+                        <select id="ruleLimitTable">${tableOptions}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Error Message:</label>
+                        <input type="text" id="ruleLimitError" placeholder="e.g. Program is fully booked" />
+                    </div>
+                </div>
+
+                <div id="postActionFields" style="display:none;">
+                    <div class="rule-row">
+                        <label>Target Table:</label>
+                        <select id="rulePostTargetTable">${tableOptions}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Action:</label>
+                        <select id="rulePostAction">
+                            <option value="INSERT">INSERT</option>
+                            <option value="UPDATE">UPDATE</option>
+                        </select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Set Table (to update):</label>
+                        <select id="ruleSetTable">${tableOptions}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Set Field:</label>
+                        <input type="text" id="ruleSetField" placeholder="e.g. totalCost, voted" />
+                    </div>
+                    <div class="rule-row">
+                        <label>Set Value (SQL expression):</label>
+                        <input type="text" id="ruleSetValue" placeholder="e.g. hoursBooked * hourlyRate" />
+                    </div>
+                    <div class="rule-row">
+                        <label>Where Field (match on):</label>
+                        <select id="ruleWhereField">${fkFieldsHtml}</select>
+                    </div>
+                    <div class="rule-row">
+                        <label>Source Field (from request body):</label>
+                        <select id="ruleWhereSourceField">${fkFieldsHtml}</select>
+                    </div>
+                </div>
+
+                <input type="hidden" id="editingRuleIndex" value="-1" />
+                <div class="rule-actions">
+                    <button class="btn btn-success" id="addRuleBtn" onclick="addNewRule()">Add Rule</button>
+                    <button class="btn btn-primary" id="updateRuleBtn" onclick="updateRule()" style="display:none;">Update Rule</button>
+                    <button class="btn btn-warning" id="cancelEditBtn" onclick="cancelEditRule()" style="display:none;">Cancel</button>
+                    <button class="btn btn-info" onclick="previewRules()">Preview Code</button>
+                </div>
+            </div>
+
+            <textarea class="qb-preview-textarea" id="rulesPreview" readonly placeholder="Click 'Preview Code' to see generated middleware"></textarea>
+            <div class="rule-actions" style="margin-top:8px;">
+                <button class="btn btn-success" onclick="generateRules()" ${rules.length > 0 ? '' : 'disabled'}>${this._svgGenerateIcon()} Generate Rules Code</button>
+            </div>
+        </div>
+        ` : `
+        <div class="empty-state">
+            <h2>Register tables first</h2>
+            <p>Go to the <strong>Tables</strong> tab, add some tables,<br>
+            then come here to define business rules.</p>
+        </div>
+        `}
+    </div>
+
+    <div id="tabActionsContent" class="tab-content">
+        ${hasTables ? `
+        <div class="rules-panel">
+            <h3>${this._svgGenerateIcon()} Custom Action Routes</h3>
+            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+                Define custom API routes with business logic (e.g., voting, booking, ordering).
+                These routes include authentication, pre-checks, inserts, and post-actions — all generated from a form.
+            </p>
+
+            <div id="savedActionRoutes">${savedActionRoutesHtml}</div>
+
+            <div class="rules-add-form" id="actionRouteForm">
+                <h4>Add New Action Route</h4>
+
+                <div class="rule-row">
+                    <label>Route Name:</label>
+                    <input type="text" id="arName" placeholder="e.g. vote, book, order" />
+                </div>
+                <div class="rule-row">
+                    <label>Description:</label>
+                    <input type="text" id="arDescription" placeholder="e.g. Cast a vote for a candidate" />
+                </div>
+                <div class="rule-row">
+                    <label>Target Table:</label>
+                    <select id="arTargetTable">${tableOptions}</select>
+                </div>
+                <div class="rule-row">
+                    <label>Use Authentication:</label>
+                    <select id="arUseJwt">
+                        <option value="true">Yes (require login)</option>
+                        <option value="false">No (public route)</option>
+                    </select>
+                </div>
+                <div class="rule-row">
+                    <label>Identity Field (from JWT):</label>
+                    <select id="arIdentityField">
+                        <option value="">— None —</option>
+                        ${fkFieldsHtml}
+                    </select>
+                    <span style="color:#555;font-size:11px;">Which field stores the logged-in user's ID?</span>
+                </div>
+
+                <h4>Pre-Checks (validate before insert)</h4>
+                <div id="arPreChecks"></div>
+                <button class="btn btn-info btn-sm" onclick="addArPreCheck()" style="margin-bottom:12px;">+ Add Pre-Check</button>
+
+                <h4>Limit Checks (prevent exceeding a limit)</h4>
+                <div id="arLimitChecks"></div>
+                <button class="btn btn-info btn-sm" onclick="addArLimitCheck()" style="margin-bottom:12px;">+ Add Limit Check</button>
+
+                <h4>Post-Actions (update after insert)</h4>
+                <div id="arPostActions"></div>
+                <button class="btn btn-info btn-sm" onclick="addArPostAction()" style="margin-bottom:12px;">+ Add Post-Action</button>
+
+                <div class="rule-actions">
+                    <button class="btn btn-success" onclick="addActionRoute()">Add Route</button>
+                    <button class="btn btn-info" onclick="previewActionRoute()">Preview Code</button>
+                </div>
+            </div>
+
+            <textarea class="qb-preview-textarea" id="actionRoutePreview" readonly placeholder="Click 'Preview Code' to see generated route"></textarea>
+            <div class="rule-actions" style="margin-top:8px;">
+                <button class="btn btn-success" onclick="generateActionRoute()" ${actionRoutes.length > 0 ? '' : 'disabled'}>${this._svgGenerateIcon()} Generate Route Code</button>
+            </div>
+        </div>
+        ` : `
+        <div class="empty-state">
+            <h2>Register tables first</h2>
+            <p>Go to the <strong>Tables</strong> tab, add some tables,<br>
+            then come here to define custom action routes.</p>
         </div>
         `}
     </div>
@@ -1161,6 +1758,17 @@ class SchemaViewProvider {
                         <span>Include login system</span>
                     </label>
                     <span style="color:#555;font-size:11px;">(configure in Auth tab first)</span>
+                </div>
+            </div>
+
+            <div class="auth-section">
+                <label>Optional: Include Business Rules</label>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;align-items:center;">
+                    <label class="qb-groupby-cb" style="color:#888;">
+                        <input type="checkbox" onchange="updateQsBtn()" id="qsEnableRules" />
+                        <span>Include business rules</span>
+                    </label>
+                    <span style="color:#555;font-size:11px;">(${rules.length} rule${rules.length !== 1 ? 's' : ''} defined in Rules tab)</span>
                 </div>
             </div>
 

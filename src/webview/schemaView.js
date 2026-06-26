@@ -659,6 +659,12 @@
             } else if (msg.command === 'authPreviewResult') {
                 var authTa = document.getElementById('authPreview');
                 if (authTa) authTa.value = msg.code || '// No code generated';
+            } else if (msg.command === 'rulesPreviewResult') {
+                var rulesTa = document.getElementById('rulesPreview');
+                if (rulesTa) rulesTa.value = msg.code || '// No rules to preview';
+            } else if (msg.command === 'actionRoutePreviewResult') {
+                var arTa = document.getElementById('actionRoutePreview');
+                if (arTa) arTa.value = msg.code || '// No route to preview';
             }
         });
 
@@ -812,7 +818,19 @@
             var btnEl = document.getElementById(btnId);
             if (tabEl) tabEl.classList.add('tab-active');
             if (btnEl) btnEl.classList.add('tab-active');
+            // Save active tab to state so it persists after refresh
+            var state = vscode.getState() || {};
+            state.activeTab = tabName;
+            vscode.setState(state);
         }
+
+        // Restore active tab on page load
+        (function restoreActiveTab() {
+            var state = vscode.getState();
+            if (state && state.activeTab) {
+                setTimeout(function() { switchTab(state.activeTab); }, 50);
+            }
+        })();
 
         // --- Auth Generator ---
         var authState = { table: null, identityFields: [], passwordField: null, statusField: null };
@@ -993,6 +1011,11 @@
 
         function previewAuthSql() {
             if (!authState.table || authState.identityFields.length === 0 || !authState.passwordField) return;
+            var genRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : true;
+            var genRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
+            var genHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : true;
+            var genRegisterHtml = document.getElementById('authOptRegisterHtml') ? document.getElementById('authOptRegisterHtml').checked : false;
+            var useJwt = document.getElementById('authOptJwt') ? document.getElementById('authOptJwt').checked : true;
             var useBcrypt = document.getElementById('authOptBcrypt') ? document.getElementById('authOptBcrypt').checked : true;
             vscode.postMessage({
                 command: 'previewAuthSql',
@@ -1000,7 +1023,15 @@
                 identityFields: authState.identityFields,
                 passwordField: authState.passwordField,
                 statusField: authState.statusField || null,
-                useBcrypt: useBcrypt
+                useBcrypt: useBcrypt,
+                options: {
+                    useJwt: useJwt,
+                    useBcrypt: useBcrypt,
+                    generateRoute: genRoute,
+                    generateRegister: genRegister,
+                    generateHtml: genHtml,
+                    generateRegisterHtml: genRegisterHtml
+                }
             });
         }
 
@@ -1113,6 +1144,7 @@
             var page = document.getElementById('qsOptPage') ? document.getElementById('qsOptPage').checked : false;
             var boilerplate = document.getElementById('qsOptBoilerplate') ? document.getElementById('qsOptBoilerplate').checked : false;
             var includeAuth = document.getElementById('qsEnableAuth') ? document.getElementById('qsEnableAuth').checked : false;
+            var includeRules = document.getElementById('qsEnableRules') ? document.getElementById('qsEnableRules').checked : false;
 
             var authConfig = null;
             if (includeAuth && window.authState && window.authState.table) {
@@ -1133,6 +1165,7 @@
                     return { tableName: t, crud: crud, createTable: createTable, page: page, list: false, form: false };
                 }),
                 authConfig: authConfig,
+                includeRules: includeRules,
                 options: {
                     includeServerBoilerplate: boilerplate,
                     includeHtmlBoilerplate: boilerplate
@@ -1145,6 +1178,8 @@
                 cb.checked = true;
             });
             document.getElementById('qsEnableAuth').checked = false;
+            var rulesCb = document.getElementById('qsEnableRules');
+            if (rulesCb) rulesCb.checked = false;
             // Re-init qsTables
             qsTables = [];
             document.querySelectorAll('#qsTableList .auth-field-cb').forEach(function(lbl) {
@@ -1169,4 +1204,352 @@
             vscode.postMessage({ command: 'previewSql', tableName });
         }
 
-    
+        // --- Business Rules ---
+
+        function onRuleTypeChange(type) {
+            var preCheck = document.getElementById('preCheckFields');
+            var limitCheck = document.getElementById('limitCheckFields');
+            var postAction = document.getElementById('postActionFields');
+            if (preCheck) preCheck.style.display = (type === 'preCheck') ? '' : 'none';
+            if (limitCheck) limitCheck.style.display = (type === 'limitCheck') ? '' : 'none';
+            if (postAction) postAction.style.display = (type === 'postAction') ? '' : 'none';
+        }
+
+        function addNewRule() {
+            var rule = buildRule();
+
+            if (!rule.targetTable) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            vscode.postMessage({ command: 'addRule', rule: rule });
+        }
+
+        function removeRule(index, event) {
+            if (event) event.stopPropagation();
+            vscode.postMessage({ command: 'removeRule', ruleIndex: index });
+        }
+
+        function previewRules() {
+            vscode.postMessage({ command: 'previewRules' });
+        }
+
+        function generateRules() {
+            vscode.postMessage({ command: 'generateRules' });
+        }
+
+        function editRule(index, ruleJson) {
+            var rule = JSON.parse(ruleJson);
+            var idxInput = document.getElementById('editingRuleIndex');
+            if (idxInput) idxInput.value = index;
+
+            // Show update/cancel buttons, hide add button
+            document.getElementById('addRuleBtn').style.display = 'none';
+            document.getElementById('updateRuleBtn').style.display = '';
+            document.getElementById('cancelEditBtn').style.display = '';
+
+            // Set rule type
+            var typeSelect = document.getElementById('ruleType');
+            if (typeSelect) {
+                typeSelect.value = rule.type;
+                onRuleTypeChange(rule.type);
+            }
+
+            // Fill form based on rule type
+            if (rule.type === 'preCheck') {
+                setSelectValue('ruleTargetTable', rule.targetTable);
+                setSelectValue('ruleAction', rule.action);
+                setSelectValue('ruleCheckTable', rule.checkTable);
+                setSelectValue('ruleCheckField', rule.checkTable + '.' + rule.checkField);
+                setSelectValue('ruleOperator', rule.operator);
+                setInputValue('ruleCheckValue', rule.checkValue);
+                setInputValue('ruleErrorMessage', rule.errorMessage);
+            } else if (rule.type === 'limitCheck') {
+                setSelectValue('ruleLimitTargetTable', rule.targetTable);
+                setSelectValue('ruleCountField', rule.countTable + '.' + rule.countField);
+                setSelectValue('ruleGroupField', rule.groupTable + '.' + rule.groupField);
+                setInputValue('ruleLimitField', rule.limitField);
+                setSelectValue('ruleLimitTable', rule.limitTable);
+                setInputValue('ruleLimitError', rule.errorMessage);
+            } else if (rule.type === 'postAction') {
+                setSelectValue('rulePostTargetTable', rule.targetTable);
+                setSelectValue('rulePostAction', rule.action);
+                setSelectValue('ruleSetTable', rule.setTable);
+                setInputValue('ruleSetField', rule.setField);
+                setInputValue('ruleSetValue', rule.setValue);
+                setSelectValue('ruleWhereField', rule.whereTable + '.' + rule.whereField);
+                setSelectValue('ruleWhereSourceField', rule.whereSourceTable + '.' + rule.whereSourceField);
+            }
+
+            // Scroll to form
+            var form = document.getElementById('ruleForm');
+            if (form) form.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function setSelectValue(id, value) {
+            var el = document.getElementById(id);
+            if (el) el.value = value || '';
+        }
+
+        function setInputValue(id, value) {
+            var el = document.getElementById(id);
+            if (el) el.value = value || '';
+        }
+
+        function updateRule() {
+            var idxInput = document.getElementById('editingRuleIndex');
+            var idx = idxInput ? parseInt(idxInput.value) : -1;
+            if (idx < 0) return;
+
+            var rule = buildRule();
+            if (!rule.targetTable) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            vscode.postMessage({ command: 'updateRule', ruleIndex: idx, rule: rule });
+            cancelEditRule();
+        }
+
+        function cancelEditRule() {
+            var idxInput = document.getElementById('editingRuleIndex');
+            if (idxInput) idxInput.value = -1;
+
+            // Show add button, hide update/cancel
+            document.getElementById('addRuleBtn').style.display = '';
+            document.getElementById('updateRuleBtn').style.display = 'none';
+            document.getElementById('cancelEditBtn').style.display = 'none';
+
+            // Clear form
+            clearRuleForm();
+        }
+
+        function buildRule() {
+            var type = document.getElementById('ruleType').value;
+            var rule = { type: type };
+
+            if (type === 'preCheck') {
+                rule.targetTable = document.getElementById('ruleTargetTable').value;
+                rule.action = document.getElementById('ruleAction').value;
+                var checkField = document.getElementById('ruleCheckField').value;
+                var checkParts = checkField.split('.');
+                rule.checkTable = checkParts[0] || '';
+                rule.checkField = checkParts[1] || checkField;
+                rule.operator = document.getElementById('ruleOperator').value;
+                rule.checkValue = document.getElementById('ruleCheckValue').value;
+                rule.errorMessage = document.getElementById('ruleErrorMessage').value || 'Business rule violation';
+            } else if (type === 'limitCheck') {
+                rule.targetTable = document.getElementById('ruleLimitTargetTable').value;
+                var countField = document.getElementById('ruleCountField').value;
+                var countParts = countField.split('.');
+                rule.countTable = countParts[0] || '';
+                rule.countField = countParts[1] || countField;
+                var groupField = document.getElementById('ruleGroupField').value;
+                var groupParts = groupField.split('.');
+                rule.groupTable = groupParts[0] || '';
+                rule.groupField = groupParts[1] || groupField;
+                rule.limitField = document.getElementById('ruleLimitField').value;
+                rule.limitTable = document.getElementById('ruleLimitTable').value;
+                rule.errorMessage = document.getElementById('ruleLimitError').value || 'Limit exceeded';
+            } else if (type === 'postAction') {
+                rule.targetTable = document.getElementById('rulePostTargetTable').value;
+                rule.action = document.getElementById('rulePostAction').value;
+                rule.setTable = document.getElementById('ruleSetTable').value;
+                rule.setField = document.getElementById('ruleSetField').value;
+                rule.setValue = document.getElementById('ruleSetValue').value;
+                var whereField = document.getElementById('ruleWhereField').value;
+                var whereParts = whereField.split('.');
+                rule.whereTable = whereParts[0] || '';
+                rule.whereField = whereParts[1] || whereField;
+                var whereSource = document.getElementById('ruleWhereSourceField').value;
+                var whereSourceParts = whereSource.split('.');
+                rule.whereSourceTable = whereSourceParts[0] || '';
+                rule.whereSourceField = whereSourceParts[1] || whereSource;
+            }
+
+            return rule;
+        }
+
+        function clearRuleForm() {
+            setInputValue('ruleCheckValue', '');
+            setInputValue('ruleErrorMessage', '');
+            setInputValue('ruleLimitField', '');
+            setInputValue('ruleLimitError', '');
+            setInputValue('ruleSetField', '');
+            setInputValue('ruleSetValue', '');
+        }
+
+        // Listen for rules preview result
+        // (this is handled by the existing message listener, but we need to add the handler)
+
+        // --- end Business Rules ---
+
+        // --- Action Routes ---
+
+        var arPreCheckCount = 0;
+        var arLimitCheckCount = 0;
+        var arPostActionCount = 0;
+
+        function addArPreCheck() {
+            var idx = arPreCheckCount++;
+            var html = '<div class="qb-filter-row" id="arPreCheck' + idx + '">' +
+                '<select id="arPC_Table' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                '<select id="arPC_CheckField' + idx + '">' + getFKOptionsHtml() + '</select>' +
+                '<select id="arPC_Op' + idx + '"><option value="=">=</option><option value="!=">!=</option><option value=">">></option><option value="<"><</option></select>' +
+                '<input type="text" id="arPC_Value' + idx + '" placeholder="value" />' +
+                '<input type="text" id="arPC_Msg' + idx + '" placeholder="error message" style="min-width:150px;" />' +
+                '<button class="btn btn-danger btn-sm" onclick="removeArPreCheck(' + idx + ')">&times;</button>' +
+                '</div>';
+            document.getElementById('arPreChecks').insertAdjacentHTML('beforeend', html);
+        }
+
+        function removeArPreCheck(idx) {
+            var el = document.getElementById('arPreCheck' + idx);
+            if (el) el.remove();
+        }
+
+        function addArLimitCheck() {
+            var idx = arLimitCheckCount++;
+            var html = '<div class="qb-filter-row" id="arLimitCheck' + idx + '">' +
+                '<select id="arLC_CountTable' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                '<select id="arLC_GroupField' + idx + '">' + getFKOptionsHtml() + '</select>' +
+                '<input type="text" id="arLC_LimitField' + idx + '" placeholder="limit field (e.g. maxSlots)" />' +
+                '<select id="arLC_LimitTable' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                '<input type="text" id="arLC_Msg' + idx + '" placeholder="error message" style="min-width:150px;" />' +
+                '<button class="btn btn-danger btn-sm" onclick="removeArLimitCheck(' + idx + ')">&times;</button>' +
+                '</div>';
+            document.getElementById('arLimitChecks').insertAdjacentHTML('beforeend', html);
+        }
+
+        function removeArLimitCheck(idx) {
+            var el = document.getElementById('arLimitCheck' + idx);
+            if (el) el.remove();
+        }
+
+        function addArPostAction() {
+            var idx = arPostActionCount++;
+            var html = '<div class="qb-filter-row" id="arPostAction' + idx + '">' +
+                '<select id="arPA_SetTable' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                '<input type="text" id="arPA_SetField' + idx + '" placeholder="set field" />' +
+                '<input type="text" id="arPA_SetValue' + idx + '" placeholder="set value (SQL)" />' +
+                '<select id="arPA_WhereField' + idx + '">' + getFKOptionsHtml() + '</select>' +
+                '<button class="btn btn-danger btn-sm" onclick="removeArPostAction(' + idx + ')">&times;</button>' +
+                '</div>';
+            document.getElementById('arPostActions').insertAdjacentHTML('beforeend', html);
+        }
+
+        function removeArPostAction(idx) {
+            var el = document.getElementById('arPostAction' + idx);
+            if (el) el.remove();
+        }
+
+        function getTableOptionsHtml() {
+            var select = document.getElementById('arTargetTable');
+            if (!select) return '';
+            return select.innerHTML;
+        }
+
+        function getFKOptionsHtml() {
+            var select = document.getElementById('arIdentityField');
+            if (!select) return '';
+            return select.innerHTML;
+        }
+
+        function collectArPreChecks() {
+            var checks = [];
+            document.querySelectorAll('[id^="arPreCheck"]').forEach(function(el) {
+                var idx = el.id.replace('arPreCheck', '');
+                var checkField = document.getElementById('arPC_CheckField' + idx);
+                var fieldVal = checkField ? checkField.value : '';
+                var parts = fieldVal.split('.');
+                checks.push({
+                    checkTable: parts[0] || '',
+                    checkField: parts[1] || fieldVal,
+                    operator: document.getElementById('arPC_Op' + idx).value,
+                    checkValue: document.getElementById('arPC_Value' + idx).value,
+                    errorMessage: document.getElementById('arPC_Msg' + idx).value,
+                    identityField: parts[1] || fieldVal
+                });
+            });
+            return checks;
+        }
+
+        function collectArLimitChecks() {
+            var checks = [];
+            document.querySelectorAll('[id^="arLimitCheck"]').forEach(function(el) {
+                var idx = el.id.replace('arLimitCheck', '');
+                var groupField = document.getElementById('arLC_GroupField' + idx);
+                var groupVal = groupField ? groupField.value : '';
+                var parts = groupVal.split('.');
+                checks.push({
+                    countTable: document.getElementById('arLC_CountTable' + idx).value,
+                    groupField: parts[1] || groupVal,
+                    limitField: document.getElementById('arLC_LimitField' + idx).value,
+                    limitTable: document.getElementById('arLC_LimitTable' + idx).value,
+                    errorMessage: document.getElementById('arLC_Msg' + idx).value
+                });
+            });
+            return checks;
+        }
+
+        function collectArPostActions() {
+            var actions = [];
+            document.querySelectorAll('[id^="arPostAction"]').forEach(function(el) {
+                var idx = el.id.replace('arPostAction', '');
+                var whereField = document.getElementById('arPA_WhereField' + idx);
+                var whereVal = whereField ? whereField.value : '';
+                var parts = whereVal.split('.');
+                actions.push({
+                    setTable: document.getElementById('arPA_SetTable' + idx).value,
+                    setField: document.getElementById('arPA_SetField' + idx).value,
+                    setValue: document.getElementById('arPA_SetValue' + idx).value,
+                    whereField: parts[1] || whereVal,
+                    whereSourceField: parts[1] || whereVal,
+                    description: 'Update ' + document.getElementById('arPA_SetTable' + idx).value + '.' + document.getElementById('arPA_SetField' + idx).value
+                });
+            });
+            return actions;
+        }
+
+        function buildActionRoute() {
+            var identityField = document.getElementById('arIdentityField').value;
+            var identityParts = identityField.split('.');
+            return {
+                name: document.getElementById('arName').value,
+                description: document.getElementById('arDescription').value,
+                targetTable: document.getElementById('arTargetTable').value,
+                method: 'POST',
+                useJwt: document.getElementById('arUseJwt').value === 'true',
+                identityField: identityParts[1] || identityField,
+                preChecks: collectArPreChecks(),
+                limitChecks: collectArLimitChecks(),
+                postActions: collectArPostActions()
+            };
+        }
+
+        function addActionRoute() {
+            var route = buildActionRoute();
+            if (!route.name || !route.targetTable) {
+                alert('Route name and target table are required');
+                return;
+            }
+            vscode.postMessage({ command: 'addActionRoute', route: route });
+        }
+
+        function removeActionRoute(index, event) {
+            if (event) event.stopPropagation();
+            vscode.postMessage({ command: 'removeActionRoute', routeIndex: index });
+        }
+
+        function previewActionRoute() {
+            var route = buildActionRoute();
+            vscode.postMessage({ command: 'previewActionRoute', route: route });
+        }
+
+        function generateActionRoute() {
+            var route = buildActionRoute();
+            vscode.postMessage({ command: 'generateActionRoute', route: route });
+        }
+
+        // --- end Action Routes ---
