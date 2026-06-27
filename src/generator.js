@@ -32,6 +32,25 @@ class CodeGenerator {
         };
     }
 
+    _detectUiType(field, tableName) {
+        if (field.uiType) return field.uiType;
+        const raw = (field.rawType || field.type || '').toUpperCase();
+        const name = field.name.toLowerCase();
+        if (field.fk) return 'fk-select';
+        if (/^BOOLEAN|BOOL|BIT$/.test(raw)) return 'checkbox';
+        if (/^DATE|DATETIME|TIMESTAMP$/.test(raw)) return 'date';
+        if (raw === 'TIME') return 'time';
+        if (raw === 'YEAR') return 'number';
+        if (name.includes('email')) return 'email';
+        if (name.includes('pass')) return 'password';
+        if (name.includes('url') || name.includes('website') || name.includes('site')) return 'url';
+        if (name.includes('phone') || name.includes('tel') || name.includes('mobile')) return 'tel';
+        if (name.includes('color') || name.includes('colour')) return 'color';
+        if (name.includes('desc') || name.includes('bio') || name.includes('notes') || name.includes('details') || name.includes('comment')) return 'textarea';
+        if (field.type === 'INTEGER' || field.type === 'REAL') return 'number';
+        return 'text';
+    }
+
     getStatField(tableName) {
         const table = this.schemaRegistry.getTable(tableName);
         if (!table) return null;
