@@ -260,16 +260,37 @@ class CodeGenerator {
                     } else {
                         html += `      <input name="${f.name}" style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"${required}><br>\n`;
                     }
-                } else if (f.fk) {
-                    html += `      <select name="${f.name}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;">\n`;
-                    html += `        <option value="">Select ${f.fk.table}</option>\n`;
-                    html += `      </select><br>\n`;
-                } else if (f.type === 'TEXT' && (f.name.toLowerCase().includes('desc') || f.name.toLowerCase().includes('description'))) {
-                    html += `      <textarea name="${f.name}" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;min-height:60px;"></textarea><br>\n`;
-                } else if (f.type === 'REAL' || f.type === 'INTEGER') {
-                    html += `      <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
                 } else {
-                    html += `      <input name="${f.name}" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    const uiType = this._detectUiType(f, tableName);
+                    if (uiType === 'fk-select') {
+                        html += `      <select name="${f.name}" id="${tableName.toLowerCase()}_${f.name}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;">\n`;
+                        html += `        <option value="">Select ${f.fk.table}</option>\n`;
+                        html += `      </select><br>\n`;
+                    } else if (uiType === 'checkbox') {
+                        html += `      <label style="display:block;margin-bottom:8px;"><input type="checkbox" name="${f.name}" value="1"${required}> ${label}</label>\n`;
+                    } else if (uiType === 'textarea') {
+                        html += `      <textarea name="${f.name}" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;min-height:60px;"></textarea><br>\n`;
+                    } else if (uiType === 'date') {
+                        html += `      <input name="${f.name}" type="date"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    } else if (uiType === 'time') {
+                        html += `      <input name="${f.name}" type="time"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    } else if (uiType === 'email') {
+                        html += `      <input name="${f.name}" type="email" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    } else if (uiType === 'password') {
+                        html += `      <input name="${f.name}" type="password" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    } else if (uiType === 'url') {
+                        html += `      <input name="${f.name}" type="url" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    } else if (uiType === 'tel') {
+                        html += `      <input name="${f.name}" type="tel" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    } else if (uiType === 'color') {
+                        html += `      <input name="${f.name}" type="color"${required} style="width:100%;margin-bottom:8px;padding:2px 6px;font-size:14px;height:36px;"><br>\n`;
+                    } else if (uiType === 'hidden') {
+                        html += `      <input name="${f.name}" type="hidden">\n`;
+                    } else if (uiType === 'number') {
+                        html += `      <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    } else {
+                        html += `      <input name="${f.name}" type="text" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    }
                 }
             }
             html += `      <div style="display:flex;gap:8px;margin-top:12px;">\n`;
@@ -279,6 +300,27 @@ class CodeGenerator {
             html += `    </form>\n`;
             html += `  </div>\n`;
             html += `</div>\n\n`;
+
+            // Inline FK fetch for modal selects
+            const fkFields = fields.filter(f => f.fk);
+            for (const f of fkFields) {
+                html += `<script>\n`;
+                html += `(async function load${f.fk.table}() {\n`;
+                html += `  try {\n`;
+                html += `    const res = await fetch('/api/${f.fk.table.toLowerCase()}');\n`;
+                html += `    const data = await res.json();\n`;
+                html += `    const sel = document.getElementById('${tableName.toLowerCase()}_${f.name}');\n`;
+                html += `    if (!sel) return;\n`;
+                html += `    data.forEach(function(item) {\n`;
+                html += `      const opt = document.createElement('option');\n`;
+                html += `      opt.value = item.${this.getPK(f.fk.table)};\n`;
+                html += `      opt.textContent = Object.values(item).filter(v => v != null).join(' - ');\n`;
+                html += `      sel.appendChild(opt);\n`;
+                html += `    });\n`;
+                html += `  } catch(e) { console.error('Failed to load ${f.fk.table}', e); }\n`;
+                html += `})();\n`;
+                html += `<\/script>\n`;
+            }
         }
 
         html += `<script>\n`;
@@ -309,10 +351,13 @@ class CodeGenerator {
             html += `      const row = await res.json();\n`;
             for (const f of fields) {
                 const isStatus = this._isStatusField(tableName, f.name);
+                const uiType = this._detectUiType(f, tableName);
                 if (isStatus && s.statusUiStyle === 'radio') {
                     html += `      document.querySelectorAll('#${tableName.toLowerCase()}EditForm [name="${f.name}"]').forEach(function(rb) { rb.checked = (rb.value === row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += `      var cb = document.querySelector('#${tableName.toLowerCase()}EditForm [name="${f.name}"]'); if (cb) { cb.checked = (row.${f.name} === cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                } else if (uiType === 'checkbox') {
+                    html += `      var cb = document.querySelector('#${tableName.toLowerCase()}EditForm [name="${f.name}"]'); if (cb) cb.checked = row.${f.name} == 1 || row.${f.name} === true;\n`;
                 } else {
                     html += `      var el = document.querySelector('#${tableName.toLowerCase()}EditForm [name="${f.name}"]'); if (el) el.value = row.${f.name} != null ? row.${f.name} : '';\n`;
                 }
@@ -326,7 +371,9 @@ class CodeGenerator {
             html += `  }\n\n`;
             html += `  document.getElementById('${tableName.toLowerCase()}EditForm').onsubmit = async function(e) {\n`;
             html += `    e.preventDefault();\n`;
-            html += `    const data = Object.fromEntries(new FormData(e.target));\n`;
+            html += `    var formData = new FormData(e.target);\n`;
+            html += `    document.querySelectorAll('#${tableName.toLowerCase()}EditForm input[type=checkbox]').forEach(function(cb) { if (!cb.checked) formData.set(cb.name, '0'); });\n`;
+            html += `    const data = Object.fromEntries(formData);\n`;
             html += `    try {\n`;
             html += `      await fetch(\`\${API}/\${edit${tableName}Id}\`, {\n`;
             html += `        method: '${s.editMode.toUpperCase()}',\n`;
