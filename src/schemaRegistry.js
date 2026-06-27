@@ -302,7 +302,7 @@ class SchemaRegistry {
 
             const rawName = tokens[0];
             this._validateFieldName(rawName, `"${tableName}"`);
-            const field = { name: rawName, type: 'TEXT' };
+            const field = { name: rawName, type: 'TEXT', rawType: tokens[1] };
 
             field.type = this._parseSqlType(tokens[1]);
 
@@ -455,7 +455,7 @@ class SchemaRegistry {
             const rawName = tokens[0].replace(/`/g, '');
             if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(rawName)) continue;
 
-            const field = { name: rawName, type: 'TEXT' };
+            const field = { name: rawName, type: 'TEXT', rawType: tokens[1].toUpperCase().replace(/\(.*\)/, '') };
 
             field.type = this._parseSqlType(tokens[1]);
 
