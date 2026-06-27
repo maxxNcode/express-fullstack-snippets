@@ -20,6 +20,10 @@
             vscode.postMessage({ command: 'removeFK', tableName, fieldName });
         }
 
+        function setFieldUiType(tableName, fieldName, uiType) {
+            vscode.postMessage({ command: 'setFieldUiType', tableName, fieldName, uiType });
+        }
+
         function generateAll() {
             vscode.postMessage({ command: 'generateAll' });
         }

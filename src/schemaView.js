@@ -260,6 +260,9 @@ class SchemaViewProvider {
                     case 'setTableSettings':
                         await this._handleSetTableSettings(msg.tableName, msg.settings);
                         break;
+                    case 'setFieldUiType':
+                        await this._handleSetFieldUiType(msg.tableName, msg.fieldName, msg.uiType);
+                        break;
                     case 'extractSchemaSql':
                         this._handleExtractSchemaSql();
                         break;
@@ -593,6 +596,24 @@ class SchemaViewProvider {
         try {
             await this.schemaRegistry.setTableSettings(tableName, settings);
             vscode.window.showInformationMessage(`njs: Settings saved for "${tableName}"`);
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleSetFieldUiType(tableName, fieldName, uiType) {
+        try {
+            const table = this.schemaRegistry.getTable(tableName);
+            if (!table) throw new Error(`Table "${tableName}" not found`);
+            const field = table.fields.find(f => f.name === fieldName);
+            if (!field) throw new Error(`Field "${fieldName}" not found`);
+            if (uiType && uiType !== 'auto') {
+                field.uiType = uiType;
+            } else {
+                delete field.uiType;
+            }
+            await this.schemaRegistry.save();
             this._refresh();
         } catch (err) {
             vscode.window.showErrorMessage(`njs: ${err.message}`);
@@ -2068,6 +2089,9 @@ class SchemaViewProvider {
             let defVal = String(field.default).replace(/^['"]|['"]$/g, '');
             constraints += `<span class="badge badge-default">=${this._escapeHtml(defVal)}</span>`;
         }
+        if (field.uiType) {
+            constraints += `<span class="badge badge-ui">[${this._escapeHtml(field.uiType)}]</span>`;
+        }
 
         const fkButton = isFK
             ? `<button class="btn btn-danger btn-sm" onclick="removeFK('${jsSafeTable}', '${jsSafeField}', event)" title="Remove FK">${this._svgCloseIcon()}</button>`
@@ -2087,7 +2111,27 @@ class SchemaViewProvider {
             <span class="field-name">${safeFieldName}</span>
             <span class="field-type">${typeLabel}</span>
             <div class="field-constraints">${constraints}</div>
-            <div class="field-actions">${fkButton}</div>
+            <div class="field-actions">
+                <select class="ui-type-select" title="UI control type"
+                    onchange="setFieldUiType('${jsSafeTable}', '${jsSafeField}', this.value)"
+                    onclick="event.stopPropagation();">
+                    <option value="auto"${field.uiType ? '' : ' selected'}>Auto</option>
+                    <option value="text"${field.uiType === 'text' ? ' selected' : ''}>text</option>
+                    <option value="number"${field.uiType === 'number' ? ' selected' : ''}>number</option>
+                    <option value="textarea"${field.uiType === 'textarea' ? ' selected' : ''}>textarea</option>
+                    <option value="fk-select"${field.uiType === 'fk-select' ? ' selected' : ''}>fk-select</option>
+                    <option value="checkbox"${field.uiType === 'checkbox' ? ' selected' : ''}>checkbox</option>
+                    <option value="date"${field.uiType === 'date' ? ' selected' : ''}>date</option>
+                    <option value="time"${field.uiType === 'time' ? ' selected' : ''}>time</option>
+                    <option value="email"${field.uiType === 'email' ? ' selected' : ''}>email</option>
+                    <option value="password"${field.uiType === 'password' ? ' selected' : ''}>password</option>
+                    <option value="url"${field.uiType === 'url' ? ' selected' : ''}>url</option>
+                    <option value="tel"${field.uiType === 'tel' ? ' selected' : ''}>tel</option>
+                    <option value="color"${field.uiType === 'color' ? ' selected' : ''}>color</option>
+                    <option value="hidden"${field.uiType === 'hidden' ? ' selected' : ''}>hidden</option>
+                </select>
+                ${fkButton}
+            </div>
         </div>`;
     }
 

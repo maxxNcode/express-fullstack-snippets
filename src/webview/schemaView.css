@@ -139,6 +139,15 @@
     .badge-fk { background: #004466; color: #4fc3f7; }
     .badge-nn { background: #440000; color: #ff6b6b; }
     .badge-default { background: #224422; color: #6bff6b; }
+    .badge-ui { background: #443366; color: #ce93d8; }
+    select.ui-type-select {
+        font-size: 10px; padding: 1px 2px; margin-right: 4px;
+        border: 1px solid var(--vscode-dropdown-border, #555);
+        background: var(--vscode-dropdown-background, #333);
+        color: var(--vscode-dropdown-foreground, #ccc);
+        border-radius: 3px;
+        max-width: 85px;
+    }
     .field-actions { flex-shrink: 0; display: flex; gap: 2px; }
 
     /* FK reference highlighting */
