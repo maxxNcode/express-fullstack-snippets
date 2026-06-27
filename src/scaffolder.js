@@ -539,23 +539,74 @@ class Scaffer {
                     html += '            <input type="text" name="' + f.name + '" value="' + active + '"' + required + ' />\n';
                 }
                 html += '          </div>\n';
-            } else if (f.fk) {
-                html += '          <div>\n';
-                html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
-                html += '            <select id="' + tableName.toLowerCase() + '_' + f.name + '" name="' + f.name + '"' + required + '>\n';
-                html += '              <option value="">Select ' + f.fk.table + '</option>\n';
-                html += '            </select>\n';
-                html += '          </div>\n';
-            } else if (f.type === 'REAL' || f.type === 'INTEGER') {
-                html += '          <div>\n';
-                html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
-                html += '            <input type="number" name="' + f.name + '" step="' + (f.type === 'REAL' ? 'any' : '1') + '" placeholder="' + label + '"' + required + ' />\n';
-                html += '          </div>\n';
             } else {
-                html += '          <div>\n';
-                html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
-                html += '            <input type="text" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
-                html += '          </div>\n';
+                const uiType = this.codeGen._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <select id="' + tableName.toLowerCase() + '_' + f.name + '" name="' + f.name + '"' + required + '>\n';
+                    html += '              <option value="">Select ' + f.fk.table + '</option>\n';
+                    html += '            </select>\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'checkbox') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">\n';
+                    html += '              <input type="checkbox" name="' + f.name + '" value="1"> ' + label + '\n';
+                    html += '            </label>\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'textarea') {
+                    html += '          <div style="flex:1 1 100%;">\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <textarea name="' + f.name + '" placeholder="' + label + '"' + required + ' style="min-height:60px;"></textarea>\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'date') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="date" name="' + f.name + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'time') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="time" name="' + f.name + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'email') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="email" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'password') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="password" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'url') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="url" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'tel') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="tel" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'color') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="color" name="' + f.name + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'hidden') {
+                    html += '          <input type="hidden" name="' + f.name + '">\n';
+                } else if (uiType === 'number') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="number" name="' + f.name + '" step="' + (f.type === 'REAL' ? 'any' : '1') + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="text" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                }
             }
 
             if ((i + 1) % 2 === 0 && i + 1 < fields.length) {
@@ -718,7 +769,9 @@ class Scaffer {
         html += "    document.getElementById('recordForm').onsubmit = async function(e) {\n";
         html += '      e.preventDefault();\n';
         html += "      const form = e.target;\n";
-        html += "      const data = Object.fromEntries(new FormData(form));\n";
+        html += "      var fd = new FormData(form);\n";
+        html += "      form.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (!cb.checked) fd.set(cb.name, '0'); });\n";
+        html += "      const data = Object.fromEntries(fd);\n";
         html += "      const msg = document.getElementById('formMessage');\n";
         html += '      try {\n';
         if (isModalEdit) {
@@ -753,13 +806,16 @@ class Scaffer {
             html += '      editId = id;\n';
             for (const f of fields) {
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-                if (f.fk) {
+                const uiType = this.codeGen._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
                     const selectId = 'editModal_' + tableName.toLowerCase() + '_' + f.name;
                     html += "      if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
                 } else if (isStatus && s.statusUiStyle === 'radio') {
                     html += "      document.querySelectorAll('#editModalForm input[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value === row." + f.name + "); });\n";
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else if (uiType === 'checkbox') {
+                    html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {
                     html += "      var el = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (el) el.value = row." + f.name + " != null ? row." + f.name + " : '';\n";
                 }
@@ -774,7 +830,9 @@ class Scaffer {
 
             html += "    document.getElementById('editModalForm').onsubmit = async function(e) {\n";
             html += '      e.preventDefault();\n';
-            html += "      const data = Object.fromEntries(new FormData(e.target));\n";
+            html += "      var fd = new FormData(e.target);\n";
+            html += "      e.target.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (!cb.checked) fd.set(cb.name, '0'); });\n";
+            html += "      const data = Object.fromEntries(fd);\n";
             html += '      try {\n';
             html += "        await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
             html += '        closeEditModal();\n';
@@ -831,7 +889,8 @@ class Scaffer {
             html += '        editId = id;\n';
             for (const f of fields) {
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-                if (f.fk) {
+                const uiType = this.codeGen._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
                     const selectId = tableName.toLowerCase() + '_' + f.name;
                     html += "        if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
                 } else if (isStatus && s.statusUiStyle === 'radio') {
@@ -840,6 +899,8 @@ class Scaffer {
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]');\n";
                     html += "        if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else if (uiType === 'checkbox') {
+                    html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {
                     html += "        if (document.querySelector('[name=\\\"" + f.name + "\\\"]')) document.querySelector('[name=\\\"" + f.name + "\\\"]').value = row." + f.name + " != null ? row." + f.name + " : '';\n";
                 }
