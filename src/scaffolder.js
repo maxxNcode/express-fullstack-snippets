@@ -485,6 +485,14 @@ class Scaffer {
         html += '    .status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;}\n';
         html += '    .status-active{background:#1b5e20;color:#a5d6a7;}\n';
         html += '    .status-inactive{background:#b71c1c;color:#ef9a9a;}\n';
+        html += '    .pg-btn{padding:4px 10px;background:#333;color:#fff;border:1px solid #888;border-radius:3px;cursor:pointer;font-size:12px;}\n';
+        html += '    .pg-btn[disabled]{opacity:0.5;cursor:default;}\n';
+        html += '    .pg-info{padding:4px 10px;color:#555;font-size:13px;}\n';
+        html += '    .search-bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;}\n';
+        html += '    .search-bar input{flex:1;padding:6px 10px;font-size:14px;border:1px solid #ddd;border-radius:4px;}\n';
+        html += '    .col-menu{display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid #ddd;border-radius:4px;padding:8px;z-index:10;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.15);}\n';
+        html += '    .col-menu label{display:block;padding:4px 8px;font-size:13px;white-space:nowrap;cursor:pointer;}\n';
+        html += '    .col-menu label input{margin-right:6px;width:auto;display:inline;}\n';
         if (isModalEdit) {
             html += '    .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:none;align-items:center;justify-content:center;}\n';
             html += '    .modal-box{background:#fff;max-width:500px;width:90%;padding:24px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);}\n';
@@ -691,9 +699,23 @@ class Scaffer {
         // Table card
         html += '    <div class="card">\n';
         html += '      <h2>' + displayName + ' Records</h2>\n';
+        html += '      <div class="search-bar">\n';
+        html += '        <input type="search" id="searchInput" placeholder="Search records..." oninput="searchRecords(this.value)">\n';
+        html += '        <div style="position:relative;">\n';
+        html += '          <button type="button" class="btn-primary btn-sm" onclick="toggleColMenu()">Columns</button>\n';
+        html += '          <div id="colMenu" class="col-menu">\n';
+        for (const f of fields) {
+            const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            html += '            <label><input type="checkbox" data-field="' + f.name + '" checked onchange="toggleCol(\'' + f.name + '\', this.checked)"> ' + label + '</label>\n';
+        }
+        html += '            <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol(\'__actions__\', this.checked)"> Actions</label>\n';
+        html += '          </div>\n';
+        html += '        </div>\n';
+        html += '      </div>\n';
         html += '      <div id="recordsTable">\n';
         html += '        <p style="color:#888;font-size:13px;">Loading...</p>\n';
         html += '      </div>\n';
+        html += '      <div id="paginationControls" style="display:flex;gap:4px;align-items:center;justify-content:center;margin-top:12px;"></div>\n';
         html += '    </div>\n';
         html += '  </div>\n\n';
 
@@ -701,6 +723,12 @@ class Scaffer {
         html += '  <script>\n';
         html += '    const API = "' + api + '";\n';
         html += '    let editId = null;\n';
+        html += '    let _allItems = [];\n';
+        html += '    let _currentPage = 1;\n';
+        html += '    let _searchTerm = "";\n';
+        html += '    let _sortField = "' + (s.sortField || '') + '";\n';
+        html += '    let _sortDir = "' + (s.sortDir || 'asc') + '";\n';
+        html += '    const _pageSize = ' + (s.pageSize || 10) + ';\n';
         if (hasAuth) {
             html += '    const _fetch = authFetch;\n';
         } else {
@@ -715,55 +743,135 @@ class Scaffer {
         html += '      } catch (e) { /* FK data not critical */ }\n';
         html += '    }\n\n';
 
-        // Load records
+        // Load records (fetch all, then render with filter/sort/paginate)
         html += '    async function loadRecords() {\n';
         html += '      try {\n';
         html += '        const res = await _fetch(API);\n';
         html += '        if (!res.ok) throw new Error("Failed to load");\n';
-        html += '        const data = await res.json();\n';
-        html += '        const container = document.getElementById("recordsTable");\n';
-        html += '        if (!data || data.length === 0) {\n';
-        html += '          container.innerHTML = \'<p style="color:#888;padding:12px;text-align:center;">No records yet. Add one above.</p>\';\n';
-        html += '          return;\n';
-        html += '        }\n';
-        html += '        let html = \'<table><thead><tr>\';\n';
+        html += '        _allItems = await res.json();\n';
+        html += '        _currentPage = 1;\n';
+        html += '        _searchTerm = "";\n';
+        html += "        document.getElementById('searchInput').value = '';\n";
+        html += '        renderRecords();\n';
+        html += '      } catch (err) {\n';
+        html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + err.message + '</p>';\n";
+        html += '      }\n';
+        html += '    }\n\n';
+
+        // Render records with filter, sort, paginate
+        html += '    function renderRecords() {\n';
+        html += '      let items = _allItems;\n';
+        html += '      if (_searchTerm) {\n';
+        html += '        var term = _searchTerm.toLowerCase();\n';
+        html += '        items = items.filter(function(i) { return Object.values(i).some(function(v) { return String(v).toLowerCase().includes(term); }); });\n';
+        html += '      }\n';
+        html += '      if (_sortField) {\n';
+        html += '        items.sort(function(a, b) {\n';
+        html += '          var va = a[_sortField], vb = b[_sortField];\n';
+        html += '          if (va == null) va = ""; if (vb == null) vb = "";\n';
+        html += '          if (typeof va === "number") return _sortDir === "asc" ? va - vb : vb - va;\n';
+        html += '          va = String(va).toLowerCase(); vb = String(vb).toLowerCase();\n';
+        html += '          return _sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);\n';
+        html += '        });\n';
+        html += '      }\n';
+        html += '      var total = items.length;\n';
+        html += '      var totalPages = Math.ceil(total / _pageSize) || 1;\n';
+        html += '      if (_currentPage > totalPages) _currentPage = totalPages;\n';
+        html += '      var start = (_currentPage - 1) * _pageSize;\n';
+        html += '      var page = items.slice(start, start + _pageSize);\n';
+        html += '      var container = document.getElementById("recordsTable");\n';
+        html += '      if (!total) {\n';
+        html += '        container.innerHTML = \'<p style="color:#888;padding:12px;text-align:center;">No records yet. Add one above.</p>\';\n';
+        html += "        document.getElementById('paginationControls').innerHTML = '';\n";
+        html += '        return;\n';
+        html += '      }\n';
+        html += '      var html = \'<table><thead><tr>\';\n';
 
         for (const f of fields) {
             const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            html += "        html += '<th>" + label + "</th>';\n";
+            html += "      html += '<th onclick=\"sortRecords(\\'" + f.name + "\\')\" data-field=\"" + f.name + "\" style=\"cursor:pointer;user-select:none;\">" + label + "</th>';\n";
         }
-        html += "        html += '<th>Actions</th></tr></thead><tbody>';\n";
+        html += "      html += '<th data-field=\"__actions__\">Actions</th></tr></thead><tbody>';\n";
 
-        html += '        data.forEach(function(row) {\n';
-        html += "          html += '<tr>';\n";
+        html += '      page.forEach(function(row) {\n';
+        html += "        html += '<tr>';\n";
         for (const f of fields) {
             const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
             if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
                 const active = s.statusActiveValue;
                 const inactive = s.statusInactiveValue;
-                html += "          html += '<td>' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
+                html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
             } else {
-                html += "          html += '<td>' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
+                html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
             }
         }
-        html += "          html += '<td class=\"actions\">';\n";
-        html += "          html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
+        html += "        html += '<td class=\"actions\" data-field=\"__actions__\">';\n";
+        html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
         if (hasStat) {
-            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ';\n";
+            html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ';\n";
             if (showDelete) {
-                html += "          html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
+                html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
             }
         } else {
-            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+            html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
         }
-        html += "          html += '</td></tr>';\n";
-        html += '        });\n';
-        html += "        html += '</tbody></table>';\n";
-        html += '        container.innerHTML = html;\n';
-        html += '      } catch (err) {\n';
-        html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + err.message + '</p>';\n";
-        html += '      }\n';
+        html += "        html += '</td></tr>';\n";
+        html += '      });\n';
+        html += "      html += '</tbody></table>';\n";
+        html += '      container.innerHTML = html;\n';
+        html += '      var pgHtml = "";\n';
+        html += "      pgHtml += '<button onclick=\"goToPage(1)\" class=\"pg-btn\">&laquo;</button>';\n";
+        html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage - 1) + ')\" class=\"pg-btn\"' + (_currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';\n";
+        html += "      pgHtml += '<span class=\"pg-info\">Page ' + _currentPage + ' of ' + totalPages + ' (' + total + ' total)</span>';\n";
+        html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage + 1) + ')\" class=\"pg-btn\"' + (_currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';\n";
+        html += "      pgHtml += '<button onclick=\"goToPage(' + totalPages + ')\" class=\"pg-btn\">&raquo;</button>';\n";
+        html += "      document.getElementById('paginationControls').innerHTML = pgHtml;\n";
         html += '    }\n\n';
+
+        // Search
+        html += '    function searchRecords(term) {\n';
+        html += '      _searchTerm = term;\n';
+        html += '      _currentPage = 1;\n';
+        html += '      renderRecords();\n';
+        html += '    }\n\n';
+
+        // Sort
+        html += '    function sortRecords(field) {\n';
+        html += '      if (_sortField === field) {\n';
+        html += '        _sortDir = _sortDir === "asc" ? "desc" : "asc";\n';
+        html += '      } else {\n';
+        html += '        _sortField = field;\n';
+        html += '        _sortDir = "asc";\n';
+        html += '      }\n';
+        html += '      renderRecords();\n';
+        html += '    }\n\n';
+
+        // Go to page
+        html += '    function goToPage(page) {\n';
+        html += '      if (page < 1 || page > Math.ceil(_allItems.length / _pageSize)) return;\n';
+        html += '      _currentPage = page;\n';
+        html += '      renderRecords();\n';
+        html += '    }\n\n';
+
+        // Column visibility
+        html += '    function toggleCol(field, visible) {\n';
+        html += "      document.querySelectorAll('#recordsTable [data-field=\"' + field + '\"]').forEach(function(el) {\n";
+        html += '        el.style.display = visible ? "" : "none";\n';
+        html += '      });\n';
+        html += '    }\n\n';
+
+        // Column menu toggle
+        html += '    var colMenuVisible = false;\n';
+        html += '    function toggleColMenu() {\n';
+        html += '      colMenuVisible = !colMenuVisible;\n';
+        html += "      document.getElementById('colMenu').style.display = colMenuVisible ? 'block' : 'none';\n";
+        html += '    }\n';
+        html += "    document.addEventListener('click', function(e) {\n";
+        html += "      if (!e.target.closest('#colMenu, [onclick*=\"toggleColMenu\"]')) {\n";
+        html += "        document.getElementById('colMenu').style.display = 'none';\n";
+        html += '        colMenuVisible = false;\n';
+        html += '      }\n';
+        html += '    });\n\n';
 
         // Form submit handler (only creates when modal; also updates when inline)
         html += "    document.getElementById('recordForm').onsubmit = async function(e) {\n";

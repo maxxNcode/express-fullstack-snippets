@@ -216,17 +216,30 @@ class CodeGenerator {
         const inactiveVal = statField ? s.statusInactiveValue : '';
         const showDelete = statField && s.showDeleteButton;
 
-        const headerCells = fields.map(f => `<th>${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('');
+        const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}" style="cursor:pointer;user-select:none;">${f.name.charAt(0).toUpperCase() + f.name.slice(1)} <span id="sort${tableName}${f.name}" style="font-size:11px;color:#888;"></span></th>`).join('');
         const cellRenderers = fields.map(f => {
             if (statField && f.name === statField.name) {
-                return `<td>\${i.${f.name} === '${activeVal}' ? '<span class="status-badge status-active">${activeVal.charAt(0).toUpperCase() + activeVal.slice(1)}</span>' : (i.${f.name} === '${inactiveVal}' ? '<span class="status-badge status-inactive">${inactiveVal.charAt(0).toUpperCase() + inactiveVal.slice(1)}</span>' : i.${f.name})}</td>`;
+                return `<td data-field="${f.name}">\${i.${f.name} === '${activeVal}' ? '<span class="status-badge status-active">${activeVal.charAt(0).toUpperCase() + activeVal.slice(1)}</span>' : (i.${f.name} === '${inactiveVal}' ? '<span class="status-badge status-inactive">${inactiveVal.charAt(0).toUpperCase() + inactiveVal.slice(1)}</span>' : i.${f.name})}</td>`;
             }
-            return `<td>\${i.${f.name}}</td>`;
+            return `<td data-field="${f.name}">\${i.${f.name}}</td>`;
         }).join('');
 
         let html = `<h2>${tableName}</h2>\n`;
-        html += `<style>.status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}.status-active{background:#1b5e20;color:#a5d6a7}.status-inactive{background:#b71c1c;color:#ef9a9a}<\/style>\n`;
-        html += `<div id="${tableName.toLowerCase()}List">Loading...</div>\n\n`;
+        html += `<style>.status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}.status-active{background:#1b5e20;color:#a5d6a7}.status-inactive{background:#b71c1c;color:#ef9a9a}.pg-btn{padding:4px 10px;background:#333;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;}.pg-btn[disabled]{opacity:0.5;cursor:default;}.pg-info{padding:4px 10px;color:#ccc;}<\/style>\n`;
+        html += `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">\n`;
+        html += `  <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)" style="flex:1;padding:6px 10px;font-size:14px;border:1px solid #555;border-radius:4px;background:#1e1e1e;color:#ddd;">\n`;
+        html += `  <div style="position:relative;">\n`;
+        html += `    <button onclick="toggleColMenu${tableName}()" style="padding:6px 12px;background:#333;color:#ddd;border:1px solid #555;border-radius:4px;cursor:pointer;">Columns</button>\n`;
+        html += `    <div id="colMenu${tableName}" style="display:none;position:absolute;right:0;top:100%;background:#2d2d2d;border:1px solid #555;border-radius:4px;padding:8px;z-index:10;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.4);">\n`;
+        for (const f of fields) {
+            html += `      <label style="display:block;padding:4px 8px;color:#ccc;font-size:13px;white-space:nowrap;cursor:pointer;"><input type="checkbox" data-field="${f.name}" checked onchange="toggleCol${tableName}('${f.name}', this.checked)" style="margin-right:6px;"> ${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</label>\n`;
+        }
+        html += `      <label style="display:block;padding:4px 8px;color:#ccc;font-size:13px;white-space:nowrap;cursor:pointer;"><input type="checkbox" data-field="__actions__" checked onchange="toggleCol${tableName}('__actions__', this.checked)" style="margin-right:6px;"> Actions</label>\n`;
+        html += `    </div>\n`;
+        html += `  </div>\n`;
+        html += `</div>\n`;
+        html += `<div id="${tableName.toLowerCase()}List">Loading...</div>\n`;
+        html += `<div id="pagination${tableName}" style="display:flex;gap:4px;align-items:center;justify-content:center;margin-top:8px;"></div>\n\n`;
 
         // Modal edit overlay
         if (s.editStyle === 'modal') {
@@ -328,21 +341,98 @@ class CodeGenerator {
 
         html += `<script>\n`;
         html += `  const API = '${api}';\n`;
+        html += `  let _allItems = [];\n`;
+        html += `  let _currentPage = 1;\n`;
+        html += `  let _searchTerm = '';\n`;
+        html += `  let _sortField = '${s.sortField}';\n`;
+        html += `  let _sortDir = '${s.sortDir || 'asc'}';\n`;
+        html += `  const _pageSize = ${s.pageSize || 10};\n\n`;
         html += `  async function load${tableName}() {\n`;
         html += `    const res = await fetch(API);\n`;
-        html += `    const items = await res.json();\n`;
-        html += `    const list = document.getElementById('${tableName.toLowerCase()}List');\n`;
-        html += `    if (!items.length) { list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>'; return; }\n`;
-        html += `    list.innerHTML = \`<table><tr>${headerCells}<th>Actions</th></tr>\n`;
-        html += `      \${items.map(i => \`<tr>${cellRenderers}`;
-        html += `<td><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> `;
-        if (showDelete) {
-            html += `<button onclick="deactivate${tableName}(\${i.${pk}})" class="del-btn">Deactivate</button> `;
-            html += `<button onclick="hardDelete${tableName}(\${i.${pk}})" class="del-btn" style="background:#b71c1c;">Delete</button></td></tr>\`).join('')}</table>\`;\n`;
-        } else {
-            html += `<button onclick="${actionFunc}${tableName}(\${i.${pk}})" class="del-btn">${actionLabel}</button></td></tr>\`).join('')}</table>\`;\n`;
-        }
+        html += `    _allItems = await res.json();\n`;
+        html += `    _currentPage = 1;\n`;
+        html += `    _searchTerm = '';\n`;
+        html += `    const searchEl = document.getElementById('search${tableName}');\n`;
+        html += `    if (searchEl) searchEl.value = '';\n`;
+        html += `    render${tableName}();\n`;
         html += `  }\n\n`;
+        html += `  function render${tableName}() {\n`;
+        html += `    let items = _allItems;\n`;
+        html += `    if (_searchTerm) {\n`;
+        html += `      const term = _searchTerm.toLowerCase();\n`;
+        html += `      items = items.filter(function(i) { return Object.values(i).some(function(v) { return String(v).toLowerCase().includes(term); }); });\n`;
+        html += `    }\n`;
+        html += `    if (_sortField) {\n`;
+        html += `      items.sort(function(a, b) {\n`;
+        html += `        let va = a[_sortField], vb = b[_sortField];\n`;
+        html += `        if (va == null) va = ''; if (vb == null) vb = '';\n`;
+        html += `        if (typeof va === 'number') return _sortDir === 'asc' ? va - vb : vb - va;\n`;
+        html += `        va = String(va).toLowerCase(); vb = String(vb).toLowerCase();\n`;
+        html += `        return _sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);\n`;
+        html += `      });\n`;
+        html += `    }\n`;
+        html += `    const total = items.length;\n`;
+        html += `    const totalPages = Math.ceil(total / _pageSize) || 1;\n`;
+        html += `    if (_currentPage > totalPages) _currentPage = totalPages;\n`;
+        html += `    const start = (_currentPage - 1) * _pageSize;\n`;
+        html += `    const page = items.slice(start, start + _pageSize);\n`;
+        html += `    const list = document.getElementById('${tableName.toLowerCase()}List');\n`;
+        html += `    if (!total) {\n`;
+        html += `      list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>';\n`;
+        html += `      document.getElementById('pagination${tableName}').innerHTML = '';\n`;
+        html += `      return;\n`;
+        html += `    }\n`;
+        html += `    list.innerHTML = \`<table><tr>${headerCells}<th data-field="__actions__">Actions</th></tr>\n`;
+        html += `      \${page.map(i => \`<tr>${cellRenderers}`;
+        if (showDelete) {
+            html += `<td data-field="__actions__"><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="deactivate${tableName}(\${i.${pk}})" class="del-btn">Deactivate</button> <button onclick="hardDelete${tableName}(\${i.${pk}})" class="del-btn" style="background:#b71c1c;">Delete</button></td>\``;
+        } else {
+            html += `<td data-field="__actions__"><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="${actionFunc}${tableName}(\${i.${pk}})" class="del-btn">${actionLabel}</button></td>\``;
+        }
+        html += `).join('')}</table>\`;\n`;
+        html += `    var pgHtml = '';\n`;
+        html += `    pgHtml += '<button onclick="goToPage${tableName}(1)" class="pg-btn">&laquo;</button>';\n`;
+        html += `    pgHtml += '<button onclick="goToPage${tableName}(' + (_currentPage - 1) + ')" class="pg-btn"' + (_currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';\n`;
+        html += `    pgHtml += '<span class="pg-info">Page ' + _currentPage + ' of ' + totalPages + ' (' + total + ' total)</span>';\n`;
+        html += `    pgHtml += '<button onclick="goToPage${tableName}(' + (_currentPage + 1) + ')" class="pg-btn"' + (_currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';\n`;
+        html += `    pgHtml += '<button onclick="goToPage${tableName}(' + totalPages + ')" class="pg-btn">&raquo;</button>';\n`;
+        html += `    document.getElementById('pagination${tableName}').innerHTML = pgHtml;\n`;
+        html += `  }\n\n`;
+        html += `  function search${tableName}(term) {\n`;
+        html += `    _searchTerm = term;\n`;
+        html += `    _currentPage = 1;\n`;
+        html += `    render${tableName}();\n`;
+        html += `  }\n\n`;
+        html += `  function sort${tableName}(field) {\n`;
+        html += `    if (_sortField === field) {\n`;
+        html += `      _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';\n`;
+        html += `    } else {\n`;
+        html += `      _sortField = field;\n`;
+        html += `      _sortDir = 'asc';\n`;
+        html += `    }\n`;
+        html += `    render${tableName}();\n`;
+        html += `  }\n\n`;
+        html += `  function goToPage${tableName}(page) {\n`;
+        html += `    if (page < 1 || page > Math.ceil(_allItems.length / _pageSize)) return;\n`;
+        html += `    _currentPage = page;\n`;
+        html += `    render${tableName}();\n`;
+        html += `  }\n\n`;
+        html += `  function toggleCol${tableName}(field, visible) {\n`;
+        html += `    document.querySelectorAll('#${tableName.toLowerCase()}List [data-field="' + field + '"]').forEach(function(el) {\n`;
+        html += `      el.style.display = visible ? '' : 'none';\n`;
+        html += `    });\n`;
+        html += `  }\n\n`;
+        html += `  let colMenuVisible${tableName} = false;\n`;
+        html += `  function toggleColMenu${tableName}() {\n`;
+        html += `    colMenuVisible${tableName} = !colMenuVisible${tableName};\n`;
+        html += `    document.getElementById('colMenu${tableName}').style.display = colMenuVisible${tableName} ? 'block' : 'none';\n`;
+        html += `  }\n`;
+        html += `  document.addEventListener('click', function(e) {\n`;
+        html += `    if (!e.target.closest('#colMenu${tableName}, [onclick*="toggleColMenu${tableName}"]')) {\n`;
+        html += `      document.getElementById('colMenu${tableName}').style.display = 'none';\n`;
+        html += `      colMenuVisible${tableName} = false;\n`;
+        html += `    }\n`;
+        html += `  });\n\n`;
 
         if (s.editStyle === 'modal') {
             html += `  let edit${tableName}Id = null;\n\n`;
@@ -389,7 +479,6 @@ class CodeGenerator {
             html += `  };\n\n`;
         }
 
-        // Default deactivate/delete function
         html += `  async function ${actionFunc}${tableName}(id) {\n`;
         html += `    if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return;\n`;
         html += `    await fetch(\`\${API}/\${id}\`, { method: 'DELETE' });\n`;
@@ -598,28 +687,101 @@ class CodeGenerator {
         const inactiveVal = statField ? s.statusInactiveValue : '';
         const showDelete = statField && s.showDeleteButton;
 
-        const headerCells = fields.map(f => `<th>${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('');
+        const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}" style="cursor:pointer;user-select:none;">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('');
         const cellRenderers = fields.map(f => {
             if (statField && f.name === statField.name) {
-                return `<td>\${i.${f.name} === '${activeVal}' ? '<span class="status-badge status-active">${activeVal.charAt(0).toUpperCase() + activeVal.slice(1)}</span>' : (i.${f.name} === '${inactiveVal}' ? '<span class="status-badge status-inactive">${inactiveVal.charAt(0).toUpperCase() + inactiveVal.slice(1)}</span>' : i.${f.name})}</td>`;
+                return `<td data-field="${f.name}">\${i.${f.name} === '${activeVal}' ? '<span class="status-badge status-active">${activeVal.charAt(0).toUpperCase() + activeVal.slice(1)}</span>' : (i.${f.name} === '${inactiveVal}' ? '<span class="status-badge status-inactive">${inactiveVal.charAt(0).toUpperCase() + inactiveVal.slice(1)}</span>' : i.${f.name})}</td>`;
             }
-            return `<td>\${i.${f.name}}</td>`;
+            return `<td data-field="${f.name}">\${i.${f.name}}</td>`;
         }).join('');
 
         let js = `const API = '${api}';\n\n`;
+        js += `// Pagination + search state\n`;
+        js += `let _allItems = [];\n`;
+        js += `let _currentPage = 1;\n`;
+        js += `let _searchTerm = '';\n`;
+        js += `let _sortField = '${s.sortField}';\n`;
+        js += `let _sortDir = '${s.sortDir || 'asc'}';\n`;
+        js += `const _pageSize = ${s.pageSize || 10};\n\n`;
+        js += `/* Required HTML (add to your page):\n`;
+        js += `   <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)" style="flex:1;...">\n`;
+        js += `   <div id="${tableName.toLowerCase()}List">Loading...</div>\n`;
+        js += `   <div id="pagination${tableName}" style="display:flex;gap:4px;align-items:center;justify-content:center;margin-top:8px;"></div>\n`;
+        js += `*/\n\n`;
         js += `async function load${tableName}() {\n`;
         js += `  const res = await fetch(API);\n`;
-        js += `  const items = await res.json();\n`;
+        js += `  _allItems = await res.json();\n`;
+        js += `  _currentPage = 1;\n`;
+        js += `  _searchTerm = '';\n`;
+        js += `  const searchEl = document.getElementById('search${tableName}');\n`;
+        js += `  if (searchEl) searchEl.value = '';\n`;
+        js += `  render${tableName}();\n`;
+        js += `}\n\n`;
+        js += `function render${tableName}() {\n`;
+        js += `  let items = _allItems;\n`;
+        js += `  if (_searchTerm) {\n`;
+        js += `    const term = _searchTerm.toLowerCase();\n`;
+        js += `    items = items.filter(function(i) { return Object.values(i).some(function(v) { return String(v).toLowerCase().includes(term); }); });\n`;
+        js += `  }\n`;
+        js += `  if (_sortField) {\n`;
+        js += `    items.sort(function(a, b) {\n`;
+        js += `      let va = a[_sortField], vb = b[_sortField];\n`;
+        js += `      if (va == null) va = ''; if (vb == null) vb = '';\n`;
+        js += `      if (typeof va === 'number') return _sortDir === 'asc' ? va - vb : vb - va;\n`;
+        js += `      va = String(va).toLowerCase(); vb = String(vb).toLowerCase();\n`;
+        js += `      return _sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);\n`;
+        js += `    });\n`;
+        js += `  }\n`;
+        js += `  const total = items.length;\n`;
+        js += `  const totalPages = Math.ceil(total / _pageSize) || 1;\n`;
+        js += `  if (_currentPage > totalPages) _currentPage = totalPages;\n`;
+        js += `  const start = (_currentPage - 1) * _pageSize;\n`;
+        js += `  const page = items.slice(start, start + _pageSize);\n`;
         js += `  const list = document.getElementById('${tableName.toLowerCase()}List');\n`;
-        js += `  if (!items.length) { list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>'; return; }\n`;
-        js += `  list.innerHTML = \`<table><tr>${headerCells}<th>Actions</th></tr>\n`;
-        js += `    \${items.map(i => \`<tr>${cellRenderers}`;
+        js += `  if (!total) {\n`;
+        js += `    list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>';\n`;
+        js += `    document.getElementById('pagination${tableName}').innerHTML = '';\n`;
+        js += `    return;\n`;
+        js += `  }\n`;
+        js += `  list.innerHTML = \`<table><tr>${headerCells}<th data-field="__actions__">Actions</th></tr>\n`;
+        js += `    \${page.map(i => \`<tr>${cellRenderers}`;
         if (showDelete) {
-            js += `<td><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="deactivate${tableName}(\${i.${pk}})" class="del-btn">Deactivate</button> <button onclick="hardDelete${tableName}(\${i.${pk}})" class="del-btn" style="background:#b71c1c;">Delete</button></td>\``;
+            js += `<td data-field="__actions__"><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="deactivate${tableName}(\${i.${pk}})" class="del-btn">Deactivate</button> <button onclick="hardDelete${tableName}(\${i.${pk}})" class="del-btn" style="background:#b71c1c;">Delete</button></td>\``;
         } else {
-            js += `<td><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="${actionFunc}${tableName}(\${i.${pk}})" class="del-btn">${actionLabel}</button></td>\``;
+            js += `<td data-field="__actions__"><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="${actionFunc}${tableName}(\${i.${pk}})" class="del-btn">${actionLabel}</button></td>\``;
         }
         js += `).join('')}</table>\`;\n`;
+        js += `  var pgHtml = '';\n`;
+        js += `  pgHtml += '<button onclick="goToPage${tableName}(1)" class="pg-btn">&laquo;</button>';\n`;
+        js += `  pgHtml += '<button onclick="goToPage${tableName}(' + (_currentPage - 1) + ')" class="pg-btn"' + (_currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';\n`;
+        js += `  pgHtml += '<span class="pg-info">Page ' + _currentPage + ' of ' + totalPages + ' (' + total + ' total)</span>';\n`;
+        js += `  pgHtml += '<button onclick="goToPage${tableName}(' + (_currentPage + 1) + ')" class="pg-btn"' + (_currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';\n`;
+        js += `  pgHtml += '<button onclick="goToPage${tableName}(' + totalPages + ')" class="pg-btn">&raquo;</button>';\n`;
+        js += `  document.getElementById('pagination${tableName}').innerHTML = pgHtml;\n`;
+        js += `}\n\n`;
+        js += `function search${tableName}(term) {\n`;
+        js += `  _searchTerm = term;\n`;
+        js += `  _currentPage = 1;\n`;
+        js += `  render${tableName}();\n`;
+        js += `}\n\n`;
+        js += `function sort${tableName}(field) {\n`;
+        js += `  if (_sortField === field) {\n`;
+        js += `    _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';\n`;
+        js += `  } else {\n`;
+        js += `    _sortField = field;\n`;
+        js += `    _sortDir = 'asc';\n`;
+        js += `  }\n`;
+        js += `  render${tableName}();\n`;
+        js += `}\n\n`;
+        js += `function goToPage${tableName}(page) {\n`;
+        js += `  if (page < 1 || page > Math.ceil(_allItems.length / _pageSize)) return;\n`;
+        js += `  _currentPage = page;\n`;
+        js += `  render${tableName}();\n`;
+        js += `}\n\n`;
+        js += `function toggleCol${tableName}(field, visible) {\n`;
+        js += `  document.querySelectorAll('#${tableName.toLowerCase()}List [data-field="' + field + '"]').forEach(function(el) {\n`;
+        js += `    el.style.display = visible ? '' : 'none';\n`;
+        js += `  });\n`;
         js += `}\n\n`;
         js += `async function ${actionFunc}${tableName}(id) {\n`;
         js += `  if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return;\n`;
@@ -634,7 +796,7 @@ class CodeGenerator {
             js += `}\n\n`;
         }
         js += `load${tableName}();\n`;
-        js += `// Add this CSS to your page: <style>.status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}.status-active{background:#1b5e20;color:#a5d6a7}.status-inactive{background:#b71c1c;color:#ef9a9a}<\/style>\n`;
+        js += `// Add this CSS to your page: <style>.status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}.status-active{background:#1b5e20;color:#a5d6a7}.status-inactive{background:#b71c1c;color:#ef9a9a}.pg-btn{padding:4px 10px;background:#333;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;}.pg-btn[disabled]{opacity:0.5;cursor:default;}.pg-info{padding:4px 10px;color:#ccc;}<\/style>\n`;
         return js;
     }
 
