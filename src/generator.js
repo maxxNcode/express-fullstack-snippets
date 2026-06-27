@@ -445,20 +445,62 @@ class CodeGenerator {
                 } else {
                     html += `  <input name="${f.name}" value="${active}"${required}><br>\n`;
                 }
-            } else if (f.fk) {
-                html += `  <select name="${f.name}"${required}>\n`;
-                html += `    <option value="">Select ${f.fk.table}</option>\n`;
-                html += `  </select><br>\n`;
-            } else if (f.type === 'TEXT' && (f.name.toLowerCase().includes('desc') || f.name.toLowerCase().includes('description'))) {
-                html += `  <textarea name="${f.name}" placeholder="${label}"${required}>${f.default || ''}</textarea><br>\n`;
-            } else if (f.type === 'REAL' || f.type === 'INTEGER') {
-                html += `  <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required}${defVal}><br>\n`;
             } else {
-                html += `  <input name="${f.name}" placeholder="${label}"${required}${defVal}><br>\n`;
+                const uiType = this._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
+                    html += `  <select name="${f.name}" id="${tableName.toLowerCase()}_${f.name}"${required}>\n`;
+                    html += `    <option value="">Select ${f.fk.table}</option>\n`;
+                    html += `  </select><br>\n`;
+                } else if (uiType === 'checkbox') {
+                    html += `  <label><input type="checkbox" name="${f.name}" value="1"> ${label}</label><br>\n`;
+                } else if (uiType === 'textarea') {
+                    html += `  <textarea name="${f.name}" placeholder="${label}"${required}>${f.default || ''}</textarea><br>\n`;
+                } else if (uiType === 'date') {
+                    html += `  <input name="${f.name}" type="date"${required}${defVal}><br>\n`;
+                } else if (uiType === 'time') {
+                    html += `  <input name="${f.name}" type="time"${required}${defVal}><br>\n`;
+                } else if (uiType === 'email') {
+                    html += `  <input name="${f.name}" type="email" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'password') {
+                    html += `  <input name="${f.name}" type="password" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'url') {
+                    html += `  <input name="${f.name}" type="url" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'tel') {
+                    html += `  <input name="${f.name}" type="tel" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'color') {
+                    html += `  <input name="${f.name}" type="color"${required}${defVal}><br>\n`;
+                } else if (uiType === 'hidden') {
+                    html += `  <input name="${f.name}" type="hidden">\n`;
+                } else if (uiType === 'number') {
+                    html += `  <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required}${defVal}><br>\n`;
+                } else {
+                    html += `  <input name="${f.name}" type="text" placeholder="${label}"${required}${defVal}><br>\n`;
+                }
             }
         }
         html += `  <button type="submit">Add</button>\n`;
         html += `</form>\n`;
+
+        // Inline FK fetch for form selects
+        for (const f of fields) {
+            if (!f.fk) continue;
+            html += `<script>\n`;
+            html += `(async function load${f.fk.table}() {\n`;
+            html += `  try {\n`;
+            html += `    const res = await fetch('/api/${f.fk.table.toLowerCase()}');\n`;
+            html += `    const data = await res.json();\n`;
+            html += `    const sel = document.getElementById('${tableName.toLowerCase()}_${f.name}');\n`;
+            html += `    if (!sel) return;\n`;
+            html += `    data.forEach(function(item) {\n`;
+            html += `      const opt = document.createElement('option');\n`;
+            html += `      opt.value = item.${this.getPK(f.fk.table)};\n`;
+            html += `      opt.textContent = Object.values(item).filter(v => v != null).join(' - ');\n`;
+            html += `      sel.appendChild(opt);\n`;
+            html += `    });\n`;
+            html += `  } catch(e) { console.error('Failed to load ${f.fk.table}', e); }\n`;
+            html += `})();\n`;
+            html += `<\/script>\n`;
+        }
         return html;
     }
 
@@ -476,7 +518,8 @@ class CodeGenerator {
         let js = `let edit${tableName}Id = null;\n\n`;
         js += `document.getElementById('${tableName.toLowerCase()}Form').onsubmit = async (e) => {\n`;
         js += `  e.preventDefault();\n`;
-        js += `  const fd = new FormData(e.target);\n`;
+        js += `  var fd = new FormData(e.target);\n`;
+        js += `  e.target.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (!cb.checked) fd.set(cb.name, '0'); });\n`;
         js += `  const data = Object.fromEntries(fd);\n`;
         if (isModalEdit) {
             js += `  await fetch('${api}', {\n`;
@@ -519,10 +562,13 @@ class CodeGenerator {
             js += `    edit${tableName}Id = id;\n`;
             for (const f of fields) {
                 const isStatus = this._isStatusField(tableName, f.name);
+                const uiType = this._detectUiType(f, tableName);
                 if (isStatus && s.statusUiStyle === 'radio') {
                     js += `    document.querySelectorAll('[name="${f.name}"]').forEach(function(rb) { rb.checked = (rb.value === row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     js += `    var cb = document.querySelector('[name="${f.name}"]'); if (cb) { cb.checked = (row.${f.name} === cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                } else if (uiType === 'checkbox') {
+                    js += `    var cb = document.querySelector('[name="${f.name}"]'); if (cb) cb.checked = row.${f.name} == 1 || row.${f.name} === true;\n`;
                 } else {
                     js += `    document.querySelector('[name="${f.name}"]').value = row.${f.name} != null ? row.${f.name} : '';\n`;
                 }
