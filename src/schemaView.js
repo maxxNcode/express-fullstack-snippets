@@ -2021,6 +2021,28 @@ class SchemaViewProvider {
                 </label>
             </div>
 
+            <div class="rule-row" style="margin-bottom:14px;">
+                <label style="font-weight:600;color:#ddd;display:block;margin-bottom:4px;">Rows per page (list view)</label>
+                <select id="tsPageSize" style="width:100%;padding:4px 8px;font-size:13px;">
+                    <option value="5">5</option>
+                    <option value="10" selected>10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+
+            <div class="rule-row" style="margin-bottom:14px;">
+                <label style="font-weight:600;color:#ddd;display:block;margin-bottom:4px;">Default sort column</label>
+                <select id="tsSortField" style="width:100%;padding:4px 8px;font-size:13px;">
+                    <option value="">None</option>
+                </select>
+                <div style="display:flex;gap:12px;margin-top:6px;">
+                    <label style="font-size:13px;"><input type="radio" name="tsSortDir" value="asc" checked /> Ascending</label>
+                    <label style="font-size:13px;"><input type="radio" name="tsSortDir" value="desc" /> Descending</label>
+                </div>
+            </div>
+
             <div class="rule-actions" style="margin-top:16px;display:flex;gap:8px;">
                 <button class="btn btn-success" onclick="saveTableSettings()">Save Settings</button>
                 <button class="btn btn-warning" onclick="closeTableSettings()">Cancel</button>

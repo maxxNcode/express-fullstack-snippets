@@ -1618,6 +1618,18 @@
             } else {
                 sel.value = '';
             }
+
+            // Sort field dropdown
+            var sortSel = document.getElementById('tsSortField');
+            while (sortSel.options.length > 1) sortSel.remove(1);
+            fields.forEach(function(f) {
+                var opt = document.createElement('option');
+                opt.value = f.name;
+                opt.textContent = f.name + ' (' + (f.type || 'TEXT') + ')';
+                sortSel.appendChild(opt);
+            });
+            sortSel.value = settings.sortField || '';
+
             var uiRadios = document.querySelectorAll('input[name="tsStatusUi"]');
             uiRadios.forEach(function(r) {
                 r.checked = (r.value === (settings.statusUiStyle || 'radio'));
@@ -1633,6 +1645,11 @@
                 r.checked = (r.value === (settings.editStyle || 'form'));
             });
             document.getElementById('tsShowDelete').checked = settings.showDeleteButton === true;
+            document.getElementById('tsPageSize').value = settings.pageSize || 10;
+            var sortDirRadios = document.querySelectorAll('input[name="tsSortDir"]');
+            sortDirRadios.forEach(function(r) {
+                r.checked = (r.value === (settings.sortDir || 'asc'));
+            });
         }
 
         function saveTableSettings() {
@@ -1645,7 +1662,10 @@
                 statusInactiveValue: document.getElementById('tsStatusInactive').value.trim(),
                 editMode: document.querySelector('input[name="tsEditMode"]:checked').value,
                 editStyle: document.querySelector('input[name="tsEditStyle"]:checked').value,
-                showDeleteButton: document.getElementById('tsShowDelete').checked
+                showDeleteButton: document.getElementById('tsShowDelete').checked,
+                pageSize: parseInt(document.getElementById('tsPageSize').value) || 10,
+                sortField: document.getElementById('tsSortField').value,
+                sortDir: document.querySelector('input[name="tsSortDir"]:checked').value
             };
             vscode.postMessage({ command: 'setTableSettings', tableName: tableName, settings: settings });
             closeTableSettings();

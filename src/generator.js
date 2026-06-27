@@ -28,7 +28,10 @@ class CodeGenerator {
             statusInactiveValue: raw.statusInactiveValue || 'inactive',
             editMode: raw.editMode || 'put',
             showDeleteButton: raw.showDeleteButton === true,
-            editStyle: raw.editStyle || 'form'
+            editStyle: raw.editStyle || 'form',
+            pageSize: raw.pageSize || 10,
+            sortField: raw.sortField || '',
+            sortDir: raw.sortDir || 'asc'
         };
     }
 
