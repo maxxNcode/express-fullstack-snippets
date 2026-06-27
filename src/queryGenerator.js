@@ -388,13 +388,13 @@ class QueryGenerator {
                 html += '          html += "<td>" + (row.' + f + ' != null ? Number(row.' + f + ').toFixed(2) + \'%\' : \'0%\') + "</td>";\n';
             } else if (d.format === 'progress') {
                 html += '          var pct_' + f + ' = Number(row.' + f + ') || 0;\n';
-                html += '          html += "<td><div style=\"display:flex;align-items:center;\"><span class=\"percent-bar\" style=\"width:\" + Math.min(pct_' + f + ', 100) + \"px;\"></span>" + pct_' + f + '.toFixed(1) + \'%\' + "</div></td>";\n';
+                html += '          html += \'<td><div style="display:flex;align-items:center;"><span class="percent-bar" style="width:\' + Math.min(pct_' + f + ', 100) + \'px"></span>\' + pct_' + f + '.toFixed(1) + \'%\' + \'</div></td>\';\n';
             } else if (d.format === 'rank') {
                 html += '          var rc = "rank-default";\n';
                 html += '          if (row.' + f + ' === 1) rc = "rank-1";\n';
                 html += '          else if (row.' + f + ' === 2) rc = "rank-2";\n';
                 html += '          else if (row.' + f + ' === 3) rc = "rank-3";\n';
-                html += '          html += "<td><span class=\"rank-badge \" + rc + \"\">#" + row.' + f + ' + "</span></td>";\n';
+                html += '          html += \'<td><span class="rank-badge \' + rc + \'">#\' + row.' + f + ' + \'</span></td>\';\n';
             } else if (d.format === 'currency') {
                 html += '          html += "<td>" + (row.' + f + ' != null ? \'₱\' + Number(row.' + f + ').toFixed(2) : \'₱0.00\') + "</td>";\n';
             } else if (d.format === 'boolean') {

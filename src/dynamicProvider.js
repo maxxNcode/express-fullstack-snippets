@@ -45,7 +45,9 @@ class DynamicSnippetProvider {
                 const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
                 item.detail = `[${tableName}] ${st.detail}`;
                 item.documentation = new vscode.MarkdownString().appendCodeblock(code, 'javascript');
-                item.insertText = new vscode.SnippetString(code);
+                const snippet = new vscode.SnippetString();
+                snippet.appendText(code);
+                item.insertText = snippet;
                 item.range = new vscode.Range(position.line, njsIdx, position.line, position.character);
                 items.push(item);
             }
@@ -78,7 +80,9 @@ class DynamicSnippetProvider {
                 const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
                 item.detail = `[Query: ${queryName}] ${qt.detail}`;
                 item.documentation = new vscode.MarkdownString().appendCodeblock(code, 'javascript');
-                item.insertText = new vscode.SnippetString(code);
+                const snippet = new vscode.SnippetString();
+                snippet.appendText(code);
+                item.insertText = snippet;
                 item.range = new vscode.Range(position.line, njsIdx, position.line, position.character);
                 items.push(item);
             }

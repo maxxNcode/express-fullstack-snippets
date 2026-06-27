@@ -88,7 +88,29 @@ class SchemaRegistry {
 
     async addTable(name, fields) {
         if (this.schema.tables[name]) throw new Error(`Table "${name}" already exists`);
+        const hasPk = fields.some(f => f.pk);
+        if (!hasPk) {
+            for (const f of fields) {
+                if (f.type === 'INTEGER' && /^id$/i.test(f.name)) {
+                    f.pk = true;
+                    break;
+                }
+            }
+        }
         this.schema.tables[name] = { fields };
+        await this.save();
+    }
+
+    getTableSettings(tableName) {
+        const table = this.schema.tables[tableName];
+        if (!table) return null;
+        return table.settings || {};
+    }
+
+    async setTableSettings(tableName, settings) {
+        const table = this.schema.tables[tableName];
+        if (!table) throw new Error(`Table "${tableName}" not found`);
+        table.settings = settings || {};
         await this.save();
     }
 
@@ -184,6 +206,64 @@ class SchemaRegistry {
         await this.save();
     }
 
+    // --- Business Rules management ---
+
+    getRules() {
+        return this.schema.rules || [];
+    }
+
+    getRule(index) {
+        const rules = this.schema.rules || [];
+        return rules[index] || null;
+    }
+
+    async addRule(rule) {
+        if (!this.schema.rules) this.schema.rules = [];
+        this.schema.rules.push(rule);
+        await this.save();
+    }
+
+    async removeRule(index) {
+        if (!this.schema.rules) return;
+        this.schema.rules.splice(index, 1);
+        await this.save();
+    }
+
+    async updateRule(index, rule) {
+        if (!this.schema.rules) this.schema.rules = [];
+        this.schema.rules[index] = rule;
+        await this.save();
+    }
+
+    async clearRules() {
+        this.schema.rules = [];
+        await this.save();
+    }
+
+    // --- Action Routes management ---
+
+    getActionRoutes() {
+        return this.schema.actionRoutes || [];
+    }
+
+    addActionRoute(route) {
+        if (!this.schema.actionRoutes) this.schema.actionRoutes = [];
+        this.schema.actionRoutes.push(route);
+        return this.save();
+    }
+
+    removeActionRoute(index) {
+        if (!this.schema.actionRoutes) return;
+        this.schema.actionRoutes.splice(index, 1);
+        return this.save();
+    }
+
+    updateActionRoute(index, route) {
+        if (!this.schema.actionRoutes) this.schema.actionRoutes = [];
+        this.schema.actionRoutes[index] = route;
+        return this.save();
+    }
+
     /**
      * Parse a CREATE TABLE SQL statement into table name and field definitions.
      * Supports: CREATE TABLE [IF NOT EXISTS] name (colDefs...)
@@ -224,17 +304,7 @@ class SchemaRegistry {
             this._validateFieldName(rawName, `"${tableName}"`);
             const field = { name: rawName, type: 'TEXT' };
 
-            // Determine SQL type
-            const typeToken = tokens[1].toUpperCase();
-            if (/^(INTEGER|INT|BIGINT|SMALLINT|TINYINT|INT2|INT8)$/.test(typeToken)) {
-                field.type = 'INTEGER';
-            } else if (/^(REAL|FLOAT|DOUBLE|NUMERIC|DECIMAL)$/.test(typeToken)) {
-                field.type = 'REAL';
-            } else if (/^(TEXT|VARCHAR|CHARACTER?|NVARCHAR|NCHAR|CLOB)$/.test(typeToken)) {
-                field.type = 'TEXT';
-            } else if (/^BLOB$/.test(typeToken)) {
-                field.type = 'BLOB';
-            }
+            field.type = this._parseSqlType(tokens[1]);
 
             // Parse column constraints
             for (let i = 2; i < tokens.length; i++) {
@@ -295,6 +365,18 @@ class SchemaRegistry {
         }
         if (current.trim()) parts.push(current);
         return parts;
+    }
+
+    _parseSqlType(rawType) {
+        const t = rawType.toUpperCase().replace(/\(.*\)/, '');
+        if (/^(INTEGER|INT|BIGINT|SMALLINT|TINYINT|MEDIUMINT|INT2|INT8)$/.test(t)) return 'INTEGER';
+        if (/^(REAL|FLOAT|DOUBLE|NUMERIC|DECIMAL|NUMBER)$/.test(t)) return 'REAL';
+        if (/^(TEXT|VARCHAR|CHARACTER?|NVARCHAR|NCHAR|CLOB|LONGTEXT|MEDIUMTEXT|TINYTEXT|CHAR)$/.test(t)) return 'TEXT';
+        if (/^BLOB|LONGBLOB|MEDIUMBLOB|TINYBLOB|BINARY|VARBINARY$/.test(t)) return 'BLOB';
+        if (/^(DATE|DATETIME|TIMESTAMP|TIME|YEAR)$/.test(t)) return 'TEXT';
+        if (/^BOOLEAN|BOOL|BIT$/.test(t)) return 'INTEGER';
+        if (/^(SERIAL|UNSIGNED)/.test(t)) return 'INTEGER';
+        return 'TEXT';
     }
 
     /**
@@ -375,23 +457,7 @@ class SchemaRegistry {
 
             const field = { name: rawName, type: 'TEXT' };
 
-            // Determine SQL type — handle MySQL types
-            const typeToken = tokens[1].toUpperCase().replace(/\(.*\)/, ''); // Strip size params
-            if (/^(INTEGER|INT|BIGINT|SMALLINT|TINYINT|MEDIUMINT|INT2|INT8)$/.test(typeToken)) {
-                field.type = 'INTEGER';
-            } else if (/^(REAL|FLOAT|DOUBLE|NUMERIC|DECIMAL|NUMBER)$/.test(typeToken)) {
-                field.type = 'REAL';
-            } else if (/^(TEXT|VARCHAR|CHARACTER?|NVARCHAR|NCHAR|CLOB|LONGTEXT|MEDIUMTEXT|TINYTEXT|CHAR)$/.test(typeToken)) {
-                field.type = 'TEXT';
-            } else if (/^BLOB|LONGBLOB|MEDIUMBLOB|TINYBLOB|BINARY|VARBINARY$/.test(typeToken)) {
-                field.type = 'BLOB';
-            } else if (/^(DATE|DATETIME|TIMESTAMP|TIME|YEAR)$/.test(typeToken)) {
-                field.type = 'TEXT'; // SQLite doesn't have native date types
-            } else if (/^BOOLEAN|BOOL|BIT$/.test(typeToken)) {
-                field.type = 'INTEGER';
-            } else if (/^(SERIAL|BIGINT|UNSIGNED)/.test(typeToken)) {
-                field.type = 'INTEGER';
-            }
+            field.type = this._parseSqlType(tokens[1]);
 
             // Parse column constraints
             for (let i = 2; i < tokens.length; i++) {
@@ -669,10 +735,31 @@ class SchemaRegistry {
         if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(tableName)) {
             throw new Error(`Invalid table name "${tableName}": must be a valid identifier`);
         }
-        const fieldParts = input.substring(colonIdx + 1).split(',').map(s => s.trim()).filter(Boolean);
+        const fieldParts = [];
+        let current = '';
+        let inQuote = null;
+        const rest = input.substring(colonIdx + 1);
+        for (let ci = 0; ci < rest.length; ci++) {
+            const ch = rest[ci];
+            if (inQuote) {
+                if (ch === inQuote) inQuote = null;
+                current += ch;
+            } else if (ch === "'" || ch === '"') {
+                inQuote = ch;
+                current += ch;
+            } else if (ch === ',') {
+                const trimmed = current.trim();
+                if (trimmed) fieldParts.push(trimmed);
+                current = '';
+            } else {
+                current += ch;
+            }
+        }
+        const trimmed = current.trim();
+        if (trimmed) fieldParts.push(trimmed);
         const fields = [];
         for (const part of fieldParts) {
-            const tokens = part.split(/\s+/);
+            const tokens = part.split(/\s+/).map(t => t.replace(/[;,]+$/, ''));
             const rawName = tokens[0];
             this._validateFieldName(rawName, `"${tableName}"`);
             const field = { name: rawName, type: 'TEXT' };
@@ -680,8 +767,23 @@ class SchemaRegistry {
                 const t = tokens[i].toUpperCase();
                 if (t === 'PRIMARY') field.pk = true;
                 else if (t === 'NOT' && tokens[i + 1]?.toUpperCase() === 'NULL') { field.notNull = true; i++; }
-                else if (t === 'DEFAULT') { field.default = tokens[++i];                } else if (tokens[i].startsWith('FK->') || tokens[i].startsWith('fk->')) {
-                    const match = tokens[i].match(/FK->(\w+)\((\w+)\)/i);
+                else if (t === 'DEFAULT') {
+                    let dvParts = [];
+                    while (i + 1 < tokens.length) {
+                        const next = tokens[i + 1];
+                        const upper = next.toUpperCase();
+                        if (['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NOT', 'PRIMARY', 'DEFAULT'].includes(upper) || /^FK->/i.test(upper)) break;
+                        dvParts.push(tokens[++i]);
+                    }
+                    let dv = dvParts.join(' ');
+                    dv = dv.replace(/;+$/, '').replace(/^['"]|['"]$/g, '');
+                    field.default = dv;
+                } else if (/^fk->/i.test(tokens[i])) {
+                    let fkSpec = tokens[i];
+                    if (!/\(\w+\)$/.test(fkSpec) && i + 1 < tokens.length) {
+                        fkSpec += tokens[++i];
+                    }
+                    const match = fkSpec.match(/FK->\s*(\w+)\s*\((\w+)\)/i);
                     if (match) {
                         const targetTable = match[1];
                         const targetField = match[2];

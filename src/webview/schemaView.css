@@ -44,6 +44,8 @@
     .btn-warning:hover { background: #8a7a00; }
     .btn-info { background: #2a5a7a; color: #fff; }
     .btn-info:hover { background: #3a7a9a; }
+    .btn-secondary { background: #3c3c3c; color: #ccc; }
+    .btn-secondary:hover { background: #4a4a4a; color: #fff; }
     .btn-danger { background: #c03131; color: #fff; }
     .btn-danger:hover { background: #d64545; }
     .btn-sm { padding: 4px 10px; font-size: 12px; }
@@ -766,7 +768,7 @@
     .tab-bar {
         display: flex;
         gap: 4px;
-        margin: 0 12px;
+        margin: 0;
     }
     .tab-btn {
         background: #2d2d2d;
@@ -890,6 +892,105 @@
         margin-top: 12px;
     }
 
+    /* Rules panel */
+    .rules-panel {
+        background: #1a2a2a;
+        border: 1px solid #2a4a4a;
+        border-radius: 10px;
+        padding: 16px;
+        margin-top: 16px;
+    }
+    .rules-panel h3 {
+        color: #6cf;
+        font-size: 15px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .rules-panel h4 {
+        color: #8cf;
+        font-size: 13px;
+        margin: 14px 0 8px;
+        padding-top: 10px;
+        border-top: 1px solid #2a4a4a;
+    }
+    .rules-add-form {
+        background: #1a1a1a;
+        border: 1px solid #3c3c3c;
+        border-radius: 8px;
+        padding: 14px;
+        margin-top: 12px;
+    }
+    .rule-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+    }
+    .rule-row label {
+        color: #aaa;
+        font-size: 12px;
+        font-weight: 500;
+        min-width: 140px;
+        flex-shrink: 0;
+    }
+    .rule-row select, .rule-row input {
+        background: #1e1e1e;
+        border: 1px solid #3c3c3c;
+        border-radius: 6px;
+        padding: 6px 10px;
+        color: #d4d4d4;
+        font-size: 12px;
+        font-family: 'Consolas', monospace;
+        flex: 1;
+        min-width: 150px;
+    }
+    .rule-row select:focus, .rule-row input:focus {
+        outline: none;
+        border-color: #0078d4;
+    }
+    .rule-row select option {
+        background: #1e1e1e;
+        color: #d4d4d4;
+    }
+    .rule-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+    }
+    .saved-rule-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #1e2a2a;
+        border: 1px solid #2a4a4a;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-bottom: 6px;
+        font-size: 13px;
+    }
+    .saved-rule-item:last-child { margin-bottom: 0; }
+    .saved-rule-item .sq-name {
+        color: #ffd700;
+        font-family: 'Consolas', monospace;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 11px;
+        min-width: 90px;
+    }
+    .saved-rule-item .sq-info {
+        color: #888;
+        font-size: 11px;
+        margin-left: 8px;
+    }
+    .saved-rule-item .sq-actions {
+        display: flex;
+        gap: 4px;
+    }
+
     /* Field toggle checkbox and active state */
     .field-toggle-cb {
         accent-color: #4fc3f7;
@@ -914,6 +1015,19 @@
     .field-row.drag-origin {
         opacity: 0.5;
     }
+
+    .modal-overlay {
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.6); z-index: 1000;
+        display: flex; align-items: flex-start; justify-content: center;
+    }
+    .modal-content .rule-row { display: flex; flex-direction: column; gap: 4px; }
+    .modal-content .rule-row label { color: #aaa; font-size: 12px; font-weight: 600; }
+    .modal-content .rule-row select, .modal-content .rule-row input[type="text"] {
+        background: #2a2a2a; color: #ccc; border: 1px solid #555;
+        padding: 6px 8px; border-radius: 4px; font-size: 13px;
+    }
+    .modal-content .rule-row input[type="radio"] { margin-right: 4px; }
 
     @media (max-width: 700px) {
         .tables-container { flex-direction: column; }

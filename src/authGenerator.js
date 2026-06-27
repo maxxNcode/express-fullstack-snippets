@@ -10,6 +10,10 @@ class AuthGenerator {
 
         const useJwt = options.useJwt !== false;
         const useBcrypt = options.useBcrypt !== false;
+        const useRefreshToken = options.useRefreshToken !== false;
+        const secretStorage = options.secretStorage || 'env';
+        const jwtSecret = secretStorage === 'config' ? 'config.JWT_SECRET' : 'process.env.JWT_SECRET';
+        const jwtRefreshSecret = secretStorage === 'config' ? 'config.JWT_REFRESH_SECRET' : 'process.env.JWT_REFRESH_SECRET';
         const pk = this._getPK(tableName);
         const whereClauses = identityFields.map(f => `${f} = ?`).join(' AND ');
 
@@ -22,15 +26,18 @@ class AuthGenerator {
 
         if (useJwt) {
             code += "const jwt = require('jsonwebtoken');\n";
+            if (secretStorage === 'config') {
+                code += "const config = require('./config');\n";
+            }
         }
         if (useBcrypt) {
             code += "const bcrypt = require('bcrypt');\n";
         }
         code += '\n';
 
+        const allFields = [...identityFields, passwordField];
         code += `app.post('/api/auth/login', async (req, res) => {\n`;
         code += '  try {\n';
-        const allFields = [...identityFields, passwordField];
         code += `    const { ${allFields.join(', ')} } = req.body;\n`;
         const identityParams = identityFields.map(f => `req.body.${f}`).join(', ');
         code += `    const row = db.prepare('SELECT * FROM ${tableName} WHERE ${whereClauses}').get(${identityParams});\n`;
@@ -50,15 +57,19 @@ class AuthGenerator {
         if (useJwt) {
             code += `    const token = jwt.sign(\n`;
             code += `      { id: row.${pk}, type: 'access' },\n`;
-            code += `      process.env.JWT_SECRET,\n`;
+            code += `      ${jwtSecret},\n`;
             code += `      { expiresIn: '15m' }\n`;
             code += `    );\n`;
-            code += `    const refreshToken = jwt.sign(\n`;
-            code += `      { id: row.${pk}, type: 'refresh' },\n`;
-            code += `      process.env.JWT_REFRESH_SECRET,\n`;
-            code += `      { expiresIn: '7d' }\n`;
-            code += `    );\n`;
-            code += `    res.json({ token, refreshToken, user: { ${identityFields.map(f => `${f}: row.${f}`).join(', ')} } });\n`;
+            if (useRefreshToken) {
+                code += `    const refreshToken = jwt.sign(\n`;
+                code += `      { id: row.${pk}, type: 'refresh' },\n`;
+                code += `      ${jwtRefreshSecret},\n`;
+                code += `      { expiresIn: '7d' }\n`;
+                code += `    );\n`;
+                code += `    res.json({ token, refreshToken, user: { ${identityFields.map(f => `${f}: row.${f}`).join(', ')} } });\n`;
+            } else {
+                code += `    res.json({ token, user: { ${identityFields.map(f => `${f}: row.${f}`).join(', ')} } });\n`;
+            }
         } else {
             code += `    res.json({ user: { ${identityFields.map(f => `${f}: row.${f}`).join(', ')} } });\n`;
         }
@@ -85,7 +96,10 @@ class AuthGenerator {
             return !(fieldObj && fieldObj.pk && fieldObj.type === 'INTEGER');
         });
         const insertFields = nonPkFields.join(', ');
-        const insertPlaceholders = nonPkFields.map(f => f === passwordField ? 'hashedPassword' : `req.body.${f}`).join(', ');
+        const insertPlaceholders = nonPkFields.map(f => f === passwordField
+            ? (useBcrypt ? 'hashedPassword' : `req.body.${f}`)
+            : `req.body.${f}`
+        ).join(', ');
 
         let code = '';
         code += '// ======================= Auth: Register Route =======================\n';
@@ -128,6 +142,11 @@ class AuthGenerator {
 
     generateAuthMiddleware(tableName, identityFields, options = {}) {
         const useJwt = options.useJwt !== false;
+        const useRefreshToken = options.useRefreshToken !== false;
+        const useRateLimiter = options.useRateLimiter !== false;
+        const secretStorage = options.secretStorage || 'env';
+        const jwtSecret = secretStorage === 'config' ? 'config.JWT_SECRET' : 'process.env.JWT_SECRET';
+        const jwtRefreshSecret = secretStorage === 'config' ? 'config.JWT_REFRESH_SECRET' : 'process.env.JWT_REFRESH_SECRET';
 
         let code = '';
         code += '// ======================= Auth: Middleware & Utilities =======================\n';
@@ -139,11 +158,25 @@ class AuthGenerator {
             return code;
         }
 
-        code += "const jwt = require('jsonwebtoken');\n\n";
+        code += "const jwt = require('jsonwebtoken');\n";
+        if (secretStorage === 'config') {
+            code += "const config = require('./config');\n";
+        }
+        code += '\n';
 
-        // --- authenticate middleware (single, simple version) ---
-        code += '// --- JWT Verification Middleware ---\n';
-        code += '// Attach to any route: app.get("/api/protected", authenticate, handler)\n';
+        // --- Rate Limiter (define FIRST, then apply to routes) ---
+        if (useRateLimiter) {
+            code += '// npm install express-rate-limit\n';
+            code += "const rateLimit = require('express-rate-limit');\n";
+            code += 'const authLimiter = rateLimit({\n';
+            code += '  windowMs: 15 * 60 * 1000,\n';
+            code += '  max: 10,\n';
+            code += "  message: { error: 'Too many attempts, please try again after 15 minutes' }\n";
+            code += '});\n';
+            code += "app.use('/api/auth/login', authLimiter);\n\n";
+        }
+
+        // --- JWT Verification Middleware ---
         code += 'const authenticate = (req, res, next) => {\n';
         code += '  const header = req.headers.authorization;\n';
         code += '  if (!header || !header.startsWith(\'Bearer \')) {\n';
@@ -151,7 +184,7 @@ class AuthGenerator {
         code += '  }\n';
         code += '  const token = header.split(\' \')[1];\n';
         code += '  try {\n';
-        code += '    const decoded = jwt.verify(token, process.env.JWT_SECRET);\n';
+        code += `    const decoded = jwt.verify(token, ${jwtSecret});\n`;
         code += '    if (decoded.type !== \'access\') {\n';
         code += '      return res.status(401).json({ error: \'Invalid token type\' });\n';
         code += '    }\n';
@@ -165,52 +198,46 @@ class AuthGenerator {
         code += '  }\n';
         code += '};\n\n';
 
-        // --- logout (simple; no blacklist) ---
-        code += '// --- Logout Endpoint ---\n';
-        code += '// The client discards its tokens; the server simply acknowledges the logout.\n';
-        code += '// (For strict revocation, store tokens in a DB/Redis blacklist in production.)\n';
+        if (useRefreshToken) {
+            code += '// --- Token Refresh Endpoint ---\n';
+            code += "app.post('/api/auth/refresh', (req, res) => {\n";
+            code += '  try {\n';
+            code += '    const { refreshToken } = req.body;\n';
+            code += '    if (!refreshToken) {\n';
+            code += '      return res.status(400).json({ error: \'Refresh token required\' });\n';
+            code += '    }\n';
+            code += `    const decoded = jwt.verify(refreshToken, ${jwtRefreshSecret});\n`;
+            code += '    if (decoded.type !== \'refresh\') {\n';
+            code += '      return res.status(401).json({ error: \'Invalid token type\' });\n';
+            code += '    }\n';
+            code += '    const newToken = jwt.sign(\n';
+            code += '      { id: decoded.id, type: \'access\' },\n';
+            code += `      ${jwtSecret},\n`;
+            code += '      { expiresIn: \'15m\' }\n';
+            code += '    );\n';
+            code += '    const newRefreshToken = jwt.sign(\n';
+            code += '      { id: decoded.id, type: \'refresh\' },\n';
+            code += `      ${jwtRefreshSecret},\n`;
+            code += '      { expiresIn: \'7d\' }\n';
+            code += '    );\n';
+            code += '    res.json({ token: newToken, refreshToken: newRefreshToken });\n';
+            code += '  } catch (err) {\n';
+            code += '    return res.status(401).json({ error: \'Invalid or expired refresh token\' });\n';
+            code += '  }\n';
+            code += '});\n';
+        }
+
+        return code;
+    }
+
+    generateLogout(options = {}) {
+        let code = '';
+        code += '// ======================= Auth: Logout Route =======================\n';
+        code += '// PASTE THIS IN: server.js (inside the route section)\n';
+        code += '// =================================================================\n\n';
+
         code += "app.post('/api/auth/logout', (req, res) => {\n";
-        code += "  res.json({ message: 'Logged out successfully' });\n";
-        code += '});\n\n';
-
-        // --- refresh ---
-        code += '// --- Token Refresh Endpoint ---\n';
-        code += '// Exchange a valid refresh token for a new access + refresh token pair.\n';
-        code += "app.post('/api/auth/refresh', (req, res) => {\n";
-        code += '  try {\n';
-        code += '    const { refreshToken } = req.body;\n';
-        code += '    if (!refreshToken) {\n';
-        code += '      return res.status(400).json({ error: \'Refresh token required\' });\n';
-        code += '    }\n';
-        code += '    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);\n';
-        code += '    if (decoded.type !== \'refresh\') {\n';
-        code += '      return res.status(401).json({ error: \'Invalid token type\' });\n';
-        code += '    }\n';
-        code += '    const newToken = jwt.sign(\n';
-        code += '      { id: decoded.id, type: \'access\' },\n';
-        code += '      process.env.JWT_SECRET,\n';
-        code += '      { expiresIn: \'15m\' }\n';
-        code += '    );\n';
-        code += '    const newRefreshToken = jwt.sign(\n';
-        code += '      { id: decoded.id, type: \'refresh\' },\n';
-        code += '      process.env.JWT_REFRESH_SECRET,\n';
-        code += '      { expiresIn: \'7d\' }\n';
-        code += '    );\n';
-        code += '    res.json({ token: newToken, refreshToken: newRefreshToken });\n';
-        code += '  } catch (err) {\n';
-        code += '    return res.status(401).json({ error: \'Invalid or expired refresh token\' });\n';
-        code += '  }\n';
-        code += '});\n\n';
-
-        // --- rate limiter (optional, simple) ---
-        code += '// --- Rate Limiter for Auth Endpoints (optional but recommended) ---\n';
-        code += '// npm install express-rate-limit\n';
-        code += "// Uncomment to apply: app.use('/api/auth/login', authLimiter);\n";
-        code += "const rateLimit = require('express-rate-limit');\n";
-        code += 'const authLimiter = rateLimit({\n';
-        code += '  windowMs: 15 * 60 * 1000, // 15 minutes\n';
-        code += '  max: 10, // max 10 attempts per window\n';
-        code += "  message: { error: 'Too many attempts, please try again after 15 minutes' }\n";
+        code += '  res.json({ message: \'Logged out successfully\' });\n';
         code += '});\n';
 
         return code;
@@ -218,6 +245,7 @@ class AuthGenerator {
 
     generateLoginFormHtml(tableName, identityFields, passwordField, options = {}) {
         const useJwt = options.useJwt !== false;
+        const useRefreshToken = options.useRefreshToken !== false;
         // useAuthJs = true ONLY when the auth.js client library is actually generated
         // (i.e. JWT is on). When false, the form inlines a plain fetch so the page
         // is fully self-contained and works without auth.js.
@@ -299,7 +327,9 @@ class AuthGenerator {
             if (useJwt) {
                 // JWT path but without auth.js: store tokens manually, then redirect
                 html += '    if (result.token) localStorage.setItem(\'token\', result.token);\n';
-                html += '    if (result.refreshToken) localStorage.setItem(\'refreshToken\', result.refreshToken);\n';
+                if (useRefreshToken) {
+                    html += '    if (result.refreshToken) localStorage.setItem(\'refreshToken\', result.refreshToken);\n';
+                }
             }
             html += `    window.location.href = '${dashboardPath}';\n`;
         }
@@ -419,6 +449,10 @@ class AuthGenerator {
 
     generateEnvContent(tableName, options = {}) {
         const useJwt = options.useJwt !== false;
+        const useRefreshToken = options.useRefreshToken !== false;
+        const secretStorage = options.secretStorage || 'env';
+        const dbStorage = options.dbStorage || 'server';
+        const storeSecretsHere = secretStorage === 'config';
         let code = '';
         code += '# ======================= .env File =======================\n';
         code += '# CREATE THIS FILE: .env (in your project root)\n';
@@ -427,38 +461,75 @@ class AuthGenerator {
         code += '# Install: npm install dotenv\n';
         code += '# =========================================================\n\n';
 
-        if (useJwt) {
+        if (useJwt && !storeSecretsHere) {
             code += '# JWT Secret — CHANGE THIS to a random 64-char string\n';
             code += '# Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"\n';
             code += 'JWT_SECRET=your_super_secret_key_change_me_to_random_64_chars\n\n';
-            code += '# JWT Refresh Secret — also change this\n';
-            code += 'JWT_REFRESH_SECRET=your_refresh_secret_change_me_too\n\n';
+            if (useRefreshToken) {
+                code += '# JWT Refresh Secret — also change this\n';
+                code += 'JWT_REFRESH_SECRET=your_refresh_secret_change_me_too\n\n';
+            }
         }
 
-        code += '# Server port\n';
-        code += 'PORT=3000\n\n';
+        if (dbStorage === 'env') {
+            code += '# Database file path\n';
+            code += 'DB_PATH=data.db\n\n';
+        }
 
-        code += '# Database file path (relative to project root)\n';
-        code += 'DB_PATH=data.db\n';
+        return code;
+    }
 
+    generateConfigJs(options = {}) {
+        const useJwt = options.useJwt !== false;
+        const useRefreshToken = options.useRefreshToken !== false;
+        const dbStorage = options.dbStorage || 'server';
+        let code = '';
+        code += '// ======================= config.js =======================\n';
+        code += '// CREATE THIS FILE: config.js (in your project root)\n';
+        code += '// Then add this to server.js at the top:\n';
+        code += '//   const config = require(\'./config\');\n';
+        code += '// =========================================================\n\n';
+        code += 'module.exports = {\n';
+        if (dbStorage === 'config') {
+            code += "  DB_PATH: 'data.db',\n\n";
+        }
+        if (useJwt) {
+            code += '  // JWT Secret — CHANGE THIS to a random 64-char string\n';
+            code += "  JWT_SECRET: 'your_super_secret_key_change_me_to_random_64_chars',\n\n";
+            if (useRefreshToken) {
+                code += '  // JWT Refresh Secret — also change this\n';
+                code += "  JWT_REFRESH_SECRET: 'your_refresh_secret_change_me_too',\n\n";
+            }
+        }
+        code += '};\n';
         return code;
     }
 
     generateSetupGuide(tableName, identityFields, passwordField, options = {}) {
         const useJwt = options.useJwt !== false;
         const useBcrypt = options.useBcrypt !== false;
+        const useRefreshToken = options.useRefreshToken !== false;
+        const secretStorage = options.secretStorage || 'env';
+        const storeSecretsHere = secretStorage === 'config';
+        const dbStorage = options.dbStorage || 'server';
 
         // Detect which sections were actually generated so the guide only mentions them.
         const genLoginRoute   = options.generateRoute !== false;
         const genRegisterRoute = !!options.generateRegister;
+        const genLogout        = !!options.generateLogout;
         const genMiddleware    = useJwt && (genLoginRoute || genRegisterRoute);
-        const genEnv           = genMiddleware;
+        const envNeededForJwt  = useJwt && secretStorage === 'env';
+        const envNeededForDb   = dbStorage === 'env';
+        const genEnv           = envNeededForJwt || envNeededForDb;
+        const genConfigJs      = secretStorage === 'config' || dbStorage === 'config';
         const genAuthJs        = options.useAuthJs !== false && useJwt && (options.generateHtml !== false || !!options.generateRegisterHtml);
         const genLoginHtml     = options.generateHtml !== false;
         const genRegisterHtml  = !!options.generateRegisterHtml;
+        const needConfigRequire = genConfigJs && (useJwt || dbStorage === 'config');
 
         // Build npm install list (only what's actually needed)
-        const deps = ['express', 'better-sqlite3', 'cors', 'dotenv'];
+        const deps = ['express', 'better-sqlite3', 'cors'];
+        if (genEnv) deps.push('dotenv');
         if (useJwt) deps.push('jsonwebtoken');
         if (useBcrypt) deps.push('bcrypt');
 
@@ -473,8 +544,13 @@ class AuthGenerator {
         code += ' *    Run in your project root:\n';
         code += ` *      npm install ${deps.join(' ')}\n`;
         code += ' *\n';
-        code += ' * 2. ADD dotenv TO server.js (at the very top, before anything else)\n';
-        code += ' *      require("dotenv").config();\n';
+        code += ' * 2. ADD THESE REQUIRES TO server.js (at the very top)\n';
+        if (genEnv) {
+            code += ' *      require("dotenv").config();\n';
+        }
+        if (needConfigRequire) {
+            code += ' *      const config = require(\'./config\');\n';
+        }
         code += ' *\n';
 
         let step = 3;
@@ -482,23 +558,45 @@ class AuthGenerator {
         if (genEnv) {
             code += ` * ${step}. CREATE .env FILE\n`;
             code += ' *    Create a .env file in project root with:\n';
-            code += ' *      PORT=3000\n';
-            code += ' *      DB_PATH=data.db\n';
-            if (useJwt) {
-                code += ' *      JWT_SECRET=<random 64-char hex string>\n';
-                code += ' *      JWT_REFRESH_SECRET=<another random string>\n';
+            if (dbStorage === 'env') {
+                code += ' *      DB_PATH=data.db\n';
             }
+            if (useJwt && secretStorage === 'env') {
+                code += ' *      JWT_SECRET=<random 64-char hex string>\n';
+                if (useRefreshToken) {
+                    code += ' *      JWT_REFRESH_SECRET=<another random string>\n';
+                }
+            }
+            code += ' *\n';
+            step++;
+        }
+        if (genConfigJs) {
+            code += ` * ${step}. CREATE config.js FILE\n`;
+            code += ' *    Create a config.js file in project root with:\n';
+            code += ' *      module.exports = {\n';
+            if (dbStorage === 'config') {
+                code += ' *        DB_PATH: \'data.db\',\n';
+            }
+            if (useJwt) {
+                code += ' *        JWT_SECRET: \'<random 64-char hex string>\',\n';
+                if (useRefreshToken) {
+                    code += ' *        JWT_REFRESH_SECRET: \'<another random string>\',\n';
+                }
+            }
+            code += ' *      };\n';
             code += ' *\n';
             step++;
         }
 
         // List only the sections the user actually generated
-        if (genLoginRoute || genRegisterRoute || genMiddleware) {
+        if (genLoginRoute || genRegisterRoute || genLogout || genMiddleware) {
             code += ` * ${step}. SERVER CODE (paste into server.js)\n`;
             if (genLoginRoute)
                 code += ' *    - Login route      -> paste after db setup, before app.listen\n';
             if (genRegisterRoute)
                 code += ' *    - Register route   -> paste after db setup, before app.listen\n';
+            if (genLogout)
+                code += ' *    - Logout route     -> paste after db setup, before app.listen\n';
             if (genMiddleware) {
                 code += ' *    - Auth middleware   -> paste before any protected routes\n';
                 code += ' *      Then use it: app.get("/api/items", authenticate, handler);\n';
@@ -593,6 +691,9 @@ class AuthGenerator {
      */
     generateAuthClientJs(options = {}) {
         const useJwt = options.useJwt !== false;
+        const useRefreshToken = options.useRefreshToken !== false;
+        const hasRegister = !!options.generateRegister;
+        const hasLogout = !!options.generateLogout;
 
         let code = '';
         code += '// ======================= auth.js =======================\n';
@@ -605,73 +706,103 @@ class AuthGenerator {
         code += 'const AUTH_CONFIG = {\n';
         code += "  loginPath: '/login.html',\n";
         code += "  loginApi: '/api/auth/login',\n";
-        code += "  registerApi: '/api/auth/register',\n";
-        code += "  refreshApi: '/api/auth/refresh',\n";
-        code += "  logoutApi: '/api/auth/logout',\n";
+        if (hasRegister) {
+            code += "  registerApi: '/api/auth/register',\n";
+        }
+        if (useRefreshToken) {
+            code += "  refreshApi: '/api/auth/refresh',\n";
+        }
+        if (hasLogout) {
+            code += "  logoutApi: '/api/auth/logout',\n";
+        }
         code += "  dashboardPath: '/dashboard.html',\n";
-        code += "  publicPaths: ['/login.html', '/register.html']\n";
+        code += hasRegister
+            ? "  publicPaths: ['/login.html', '/register.html']\n"
+            : "  publicPaths: ['/login.html']\n";
         code += '};\n\n';
 
         code += `// --- Token Storage ---\n`;
-        code += "const TokenKeys = { access: 'token', refresh: 'refreshToken' };\n\n";
+        if (useRefreshToken) {
+            code += "const TokenKeys = { access: 'token', refresh: 'refreshToken' };\n\n";
+            code += 'function getRefreshToken() { return localStorage.getItem(TokenKeys.refresh); }\n';
+        } else {
+            code += "const TokenKeys = { access: 'token' };\n\n";
+        }
 
         code += 'function getToken() { return localStorage.getItem(TokenKeys.access); }\n';
-        code += 'function getRefreshToken() { return localStorage.getItem(TokenKeys.refresh); }\n';
         code += 'function setTokens(access, refresh) {\n';
         code += '  localStorage.setItem(TokenKeys.access, access);\n';
-        code += '  if (refresh) localStorage.setItem(TokenKeys.refresh, refresh);\n';
+        if (useRefreshToken) {
+            code += '  if (refresh) localStorage.setItem(TokenKeys.refresh, refresh);\n';
+        }
         code += '}\n';
         code += 'function clearTokens() {\n';
         code += '  localStorage.removeItem(TokenKeys.access);\n';
-        code += '  localStorage.removeItem(TokenKeys.refresh);\n';
+        if (useRefreshToken) {
+            code += '  localStorage.removeItem(TokenKeys.refresh);\n';
+        }
         code += '}\n\n';
 
-        code += '// --- Decode JWT payload (without verification — client side only) ---\n';
+        code += '// --- Decode JWT payload (client-side only — no signature verification) ---\n';
         code += 'function decodeToken(token) {\n';
         code += '  try { return JSON.parse(atob(token.split(\'.\')[1])); }\n';
         code += '  catch (e) { return null; }\n';
         code += '}\n\n';
 
-        code += '// --- Check if token exists (does NOT verify expiry) ---\n';
+        code += '// --- Check if a token exists in storage ---\n';
         code += 'function isAuthenticated() {\n';
         code += '  return !!getToken();\n';
         code += '}\n\n';
 
-        code += '// --- Get current user info from token ---\n';
+        code += '// --- Extract current user info from the stored token ---\n';
         code += 'function getUser() {\n';
         code += '  return decodeToken(getToken());\n';
         code += '}\n\n';
 
-        code += '// --- Get a valid token (refreshes if expired) ---\n';
-        code += 'async function getValidToken() {\n';
-        code += '  const token = getToken();\n';
-        code += '  const refreshToken = getRefreshToken();\n';
-        code += '  if (!token || !refreshToken) return null;\n\n';
-        code += '  const payload = decodeToken(token);\n';
-        code += '  if (!payload) { clearTokens(); return null; }\n\n';
-        code += '  const now = Math.floor(Date.now() / 1000);\n';
-        code += '  if (payload.exp > now + 60) return token;\n\n';
-        code += '  try {\n';
-        code += '    const res = await fetch(AUTH_CONFIG.refreshApi, {\n';
-        code += "      method: 'POST',\n";
-        code += "      headers: { 'Content-Type': 'application/json' },\n";
-        code += '      body: JSON.stringify({ refreshToken })\n';
-        code += '    });\n';
-        code += '    if (!res.ok) { clearTokens(); redirectToLogin(); return null; }\n';
-        code += '    const data = await res.json();\n';
-        code += '    setTokens(data.token, data.refreshToken);\n';
-        code += '    return data.token;\n';
-        code += '  } catch (e) { clearTokens(); redirectToLogin(); return null; }\n';
-        code += '}\n\n';
+        if (useRefreshToken) {
+            code += 'async function refreshAccessToken() {\n';
+            code += '  const rt = getRefreshToken();\n';
+            code += '  if (!rt) { clearTokens(); redirectToLogin(); return null; }\n';
+            code += '  const res = await fetch(AUTH_CONFIG.refreshApi, {\n';
+            code += "    method: 'POST',\n";
+            code += "    headers: { 'Content-Type': 'application/json' },\n";
+            code += '    body: JSON.stringify({ refreshToken: rt })\n';
+            code += '  });\n';
+            code += '  if (!res.ok) { clearTokens(); redirectToLogin(); return null; }\n';
+            code += '  const data = await res.json();\n';
+            code += '  setTokens(data.token, data.refreshToken);\n';
+            code += '  return data.token;\n';
+            code += '}\n\n';
+            code += 'async function getValidToken() {\n';
+            code += '  const token = getToken();\n';
+            code += '  if (!token) return null;\n';
+            code += '  const payload = decodeToken(token);\n';
+            code += '  if (payload && payload.exp > Math.floor(Date.now() / 1000) + 60) return token;\n';
+            code += '  return await refreshAccessToken();\n';
+            code += '}\n\n';
+        } else {
+            code += '// --- Get stored token (no refresh mechanism) ---\n';
+            code += 'function getValidToken() {\n';
+            code += '  return getToken();\n';
+            code += '}\n\n';
+        }
 
-        code += '// --- Authenticated fetch (auto-attaches Bearer token, auto-refreshes) ---\n';
+        code += '// --- Authenticated fetch — auto-attaches Bearer, handles 401 ---\n';
         code += 'async function authFetch(url, options = {}) {\n';
         code += '  const token = await getValidToken();\n';
-        code += '  if (!token) throw new Error(\'Not authenticated\');\n';
+        code += '  if (!token) {\n';
+        code += '    clearTokens();\n';
+        code += '    redirectToLogin();\n';
+        code += "    throw new Error('Not authenticated');\n";
+        code += '  }\n';
         code += '  options.headers = options.headers || {};\n';
         code += "  options.headers['Authorization'] = 'Bearer ' + token;\n";
         code += '  const res = await fetch(url, options);\n';
-        code += "  if (res.status === 401) { clearTokens(); redirectToLogin(); }\n";
+        code += '  if (res.status === 401) {\n';
+        code += '    clearTokens();\n';
+        code += '    redirectToLogin();\n';
+        code += "    throw new Error('Session expired');\n";
+        code += '  }\n';
         code += '  return res;\n';
         code += '}\n\n';
 
@@ -684,36 +815,44 @@ class AuthGenerator {
         code += '  });\n';
         code += '  const data = await res.json();\n';
         code += '  if (!res.ok) throw new Error(data.error || \'Login failed\');\n';
-        code += '  setTokens(data.token, data.refreshToken);\n';
+        if (useRefreshToken) {
+            code += '  setTokens(data.token, data.refreshToken);\n';
+        } else {
+            code += '  setTokens(data.token);\n';
+        }
         code += '  return data;\n';
         code += '}\n\n';
 
-        code += '// --- Register ---\n';
-        code += 'async function register(userData) {\n';
-        code += '  const res = await fetch(AUTH_CONFIG.registerApi, {\n';
-        code += "    method: 'POST',\n";
-        code += "    headers: { 'Content-Type': 'application/json' },\n";
-        code += '    body: JSON.stringify(userData)\n';
-        code += '  });\n';
-        code += '  const data = await res.json();\n';
-        code += '  if (!res.ok) throw new Error(data.error || \'Registration failed\');\n';
-        code += '  return data;\n';
-        code += '}\n\n';
+        if (hasRegister) {
+            code += '// --- Register ---\n';
+            code += 'async function register(userData) {\n';
+            code += '  const res = await fetch(AUTH_CONFIG.registerApi, {\n';
+            code += "    method: 'POST',\n";
+            code += "    headers: { 'Content-Type': 'application/json' },\n";
+            code += '    body: JSON.stringify(userData)\n';
+            code += '  });\n';
+            code += '  const data = await res.json();\n';
+            code += '  if (!res.ok) throw new Error(data.error || \'Registration failed\');\n';
+            code += '  return data;\n';
+            code += '}\n\n';
+        }
 
-        code += '// --- Logout ---\n';
-        code += 'async function logout() {\n';
-        code += '  try {\n';
-        code += '    const token = getToken();\n';
-        code += '    if (token) {\n';
-        code += '      await fetch(AUTH_CONFIG.logoutApi, {\n';
-        code += "        method: 'POST',\n";
-        code += "        headers: { 'Authorization': 'Bearer ' + token }\n";
-        code += '      });\n';
-        code += '    }\n';
-        code += '  } catch (e) { /* ignore */ }\n';
-        code += '  clearTokens();\n';
-        code += '  redirectToLogin();\n';
-        code += '}\n\n';
+        if (hasLogout) {
+            code += '// --- Logout (notifies server + clears local state) ---\n';
+            code += 'async function logout() {\n';
+            code += '  try {\n';
+            code += '    const token = getToken();\n';
+            code += '    if (token) {\n';
+            code += '      await fetch(AUTH_CONFIG.logoutApi, {\n';
+            code += "        method: 'POST',\n";
+            code += "        headers: { 'Authorization': 'Bearer ' + token }\n";
+            code += '      });\n';
+            code += '    }\n';
+            code += '  } catch (e) { /* server notification is best-effort */ }\n';
+            code += '  clearTokens();\n';
+            code += '  redirectToLogin();\n';
+            code += '}\n\n';
+        }
 
         code += '// --- Navigation helpers ---\n';
         code += 'function redirectToLogin() {\n';
@@ -726,8 +865,8 @@ class AuthGenerator {
         code += '  window.location.href = AUTH_CONFIG.dashboardPath;\n';
         code += '}\n\n';
 
-        code += '// --- Page-level guard: call at top of protected pages ---\n';
-        code += '// Include this in a <script> tag at the TOP of protected HTML pages:\n';
+        code += '// --- Page guard: redirect to login if not authenticated ---\n';
+        code += '// Call at the top of protected pages:\n';
         code += '//   <script src="auth.js"></script>\n';
         code += '//   <script>redirectIfNotAuthenticated();</script>\n';
         code += 'async function redirectIfNotAuthenticated() {\n';
@@ -735,33 +874,33 @@ class AuthGenerator {
         code += '  if (!token) redirectToLogin();\n';
         code += '}\n\n';
 
-        code += '// Call this on login/register pages — redirects to dashboard if already logged in\n';
+        code += '// Call on login/register pages — redirects to dashboard if already logged in\n';
         code += 'function redirectIfAuthenticated() {\n';
         code += '  if (isAuthenticated()) redirectToDashboard();\n';
         code += '}\n\n';
 
-        code += '// --- Example: How to use on each page ---\n';
+        code += '// --- Usage examples ---\n';
         code += '/*\n';
-        code += ' * === login.html (top of <head>) ===\n';
+        code += ' * === login.html ===\n';
         code += ' * <script src="auth.js"></script>\n';
         code += ' * <script>redirectIfAuthenticated();</script>\n';
         code += ' *\n';
-        code += ' * === register.html (top of <head>) ===\n';
+        code += ' * === register.html ===\n';
         code += ' * <script src="auth.js"></script>\n';
         code += ' * <script>redirectIfAuthenticated();</script>\n';
         code += ' *\n';
-        code += ' * === dashboard.html / main.html / ANY protected page (top of <head>) ===\n';
+        code += ' * === Protected page (dashboard.html, etc.) ===\n';
         code += ' * <script src="auth.js"></script>\n';
         code += ' * <script>redirectIfNotAuthenticated();</script>\n';
         code += ' *\n';
-        code += ' * === Calling APIs on any protected page ===\n';
+        code += ' * === Calling APIs ===\n';
         code += ' * const data = await authFetch("/api/items").then(r => r.json());\n';
         code += ' *\n';
         code += ' * === Logout button ===\n';
         code += ' * <button onclick="logout()">Logout</button>\n';
         code += ' *\n';
         code += ' * === Get current user ===\n';
-        code += ' * const user = getUser(); // { id: 1, iat: ..., exp: ... }\n';
+        code += " * const user = getUser(); // { id: 1, type: 'access', exp: ... }\n";
         code += ' *\n';
         code += ' * === Login form handler ===\n';
         code += ' * await login({ email: "...", password: "..." });\n';

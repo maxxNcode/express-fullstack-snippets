@@ -75,7 +75,7 @@ class Scaffer {
         for (const tableName of tableNames) {
             const table = this.schemaRegistry.getTable(tableName);
             if (!table) continue;
-            files[`public/${tableName.toLowerCase()}.html`] = this._generateCrudPage(tableName);
+            files[`public/${tableName.toLowerCase()}.html`] = this._generateCrudPage(tableName, hasAuth);
         }
 
         // Report pages
@@ -404,18 +404,24 @@ class Scaffer {
 
     /**
      * Generate a CRUD management page for a single table.
-     * Includes: data table listing, add form, edit prefill, deactivate button.
+     * Includes: data table listing, add form, edit prefill, deactivate/delete buttons.
+     * Supports per-table settings: modal edit, dual Deactivate+Delete, status UI.
      */
-    _generateCrudPage(tableName) {
+    _generateCrudPage(tableName, hasAuth) {
         const displayName = tableName.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
         const table = this.schemaRegistry.getTable(tableName);
         if (!table) return '<!-- Table not found -->';
 
         const fields = table.fields.filter(f => !f.pk);
         const pk = table.fields.find(f => f.pk);
-        const pkName = pk ? pk.name : 'id';
+        const pkName = pk ? pk.name : (table.fields.length > 0 ? table.fields[0].name : 'id');
         const api = '/api/' + tableName.toLowerCase();
-        const hasStat = fields.some(f => f.name.toLowerCase().includes('stat'));
+        const statField = this.codeGen.getStatField(tableName);
+        const hasStat = statField !== null;
+        const editMode = this.codeGen._getEditMode(tableName);
+        const s = this.codeGen._getFullSettings(tableName);
+        const isModalEdit = s.editStyle === 'modal';
+        const showDelete = hasStat && s.showDeleteButton;
 
         // Detect FK fields for dropdown population
         const fkFields = fields.filter(f => f.fk);
@@ -431,10 +437,6 @@ class Scaffer {
                 ${selectId}.appendChild(opt);
               });`;
         }).join('\n        ');
-        const fkEditPopulate = fkFields.map(f => {
-            const selectId = `${tableName.toLowerCase()}_${f.name}`;
-            return `if (document.getElementById('${selectId}')) document.getElementById('${selectId}').value = row.${f.name};`;
-        }).join('\n          ');
 
         let html = '';
         html += '<!DOCTYPE html>\n';
@@ -443,8 +445,10 @@ class Scaffer {
         html += '  <meta charset="UTF-8">\n';
         html += '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n';
         html += '  <title>' + displayName + ' Management</title>\n';
-        html += '  <script src="auth.js"></script>\n';
-        html += '  <script>redirectIfNotAuthenticated();</script>\n';
+        if (hasAuth) {
+            html += '  <script src="auth.js"></script>\n';
+            html += '  <script>redirectIfNotAuthenticated();</script>\n';
+        }
         html += '  <style>\n';
         html += '    * { margin: 0; padding: 0; box-sizing: border-box; }\n';
         html += '    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f0f2f5; padding: 20px; }\n';
@@ -472,12 +476,19 @@ class Scaffer {
         html += '    th { background: #f5f5f5; padding: 10px 12px; text-align: left; font-size: 13px; font-weight: 600; color: #555; border-bottom: 2px solid #ddd; }\n';
         html += '    td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }\n';
         html += '    tr:hover { background: #f8f9fa; }\n';
-        html += '    .actions { display: flex; gap: 4px; }\n';
+        html += '    .actions { display: flex; gap: 4px; flex-wrap: wrap; }\n';
         html += '    .message { padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 13px; }\n';
         html += '    .message-success { background: #e8f5e9; color: #2e7d32; }\n';
         html += '    .message-error { background: #ffebee; color: #c62828; }\n';
         html += '    .form-row { display: flex; gap: 12px; }\n';
         html += '    .form-row > * { flex: 1; }\n';
+        html += '    .status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;}\n';
+        html += '    .status-active{background:#1b5e20;color:#a5d6a7;}\n';
+        html += '    .status-inactive{background:#b71c1c;color:#ef9a9a;}\n';
+        if (isModalEdit) {
+            html += '    .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:none;align-items:center;justify-content:center;}\n';
+            html += '    .modal-box{background:#fff;max-width:500px;width:90%;padding:24px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);}\n';
+        }
         html += '    @media (max-width: 600px) { .form-row { flex-direction: column; } }\n';
         html += '  </style>\n';
         html += '</head>\n';
@@ -485,24 +496,50 @@ class Scaffer {
         html += '  <div class="nav-bar">\n';
         html += '    <a href="/dashboard.html">&larr; Dashboard</a>\n';
         html += '    <span style="color:rgba(255,255,255,0.7);font-size:14px;margin-left:8px;">' + displayName + '</span>\n';
-        html += '    <a class="back" href="/login.html" onclick="logout()">Logout</a>\n';
+        if (hasAuth) {
+            html += '    <a class="back" href="/login.html" onclick="logout()">Logout</a>\n';
+        } else {
+            html += '    <div style="flex:1"></div>\n';
+        }
         html += '  </div>\n';
         html += '  <div class="container">\n';
         html += '    <h1>' + displayName + ' Management</h1>\n\n';
 
-        // Form card
+        // Form card (for adding records; also used for edit when not modal)
         html += '    <div class="card">\n';
         html += '      <h2 id="formTitle">Add ' + displayName + '</h2>\n';
         html += '      <form id="recordForm">\n';
         html += '        <div class="form-row">\n';
 
-        // Generate input fields (2 per row)
         for (let i = 0; i < fields.length; i++) {
             const f = fields[i];
             const required = f.notNull ? ' required' : '';
             const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
 
-            if (f.fk) {
+            if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
+                const active = s.statusActiveValue;
+                const inactive = s.statusInactiveValue;
+                html += '          <div style="flex:1;">\n';
+                html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                if (s.statusUiStyle === 'radio') {
+                    html += '            <label style="margin-right:8px;font-size:13px;"><input type="radio" name="' + f.name + '" value="' + active + '" checked /> ' + active.charAt(0).toUpperCase() + active.slice(1) + '</label>\n';
+                    html += '            <label style="font-size:13px;"><input type="radio" name="' + f.name + '" value="' + inactive + '" /> ' + inactive.charAt(0).toUpperCase() + inactive.slice(1) + '</label>\n';
+                } else if (s.statusUiStyle === 'dropdown') {
+                    html += '            <select name="' + f.name + '"' + required + '>\n';
+                    html += '              <option value="' + active + '" selected>' + active.charAt(0).toUpperCase() + active.slice(1) + '</option>\n';
+                    html += '              <option value="' + inactive + '">' + inactive.charAt(0).toUpperCase() + inactive.slice(1) + '</option>\n';
+                    html += '            </select>\n';
+                } else if (s.statusUiStyle === 'toggle') {
+                    html += '            <label class="switch" style="position:relative;display:inline-block;width:44px;height:24px;vertical-align:middle;">\n';
+                    html += '              <input type="checkbox" name="' + f.name + '" value="' + active + '" onchange="this.value=this.checked?\'' + active + '\':\'' + inactive + '\'" checked>\n';
+                    html += '              <span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:24px;transition:.3s;"></span>\n';
+                    html += '            </label>\n';
+                } else {
+                    html += '            <input type="text" name="' + f.name + '" value="' + active + '"' + required + ' />\n';
+                }
+                html += '          </div>\n';
+            } else if (f.fk) {
                 html += '          <div>\n';
                 html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
                 html += '            <select id="' + tableName.toLowerCase() + '_' + f.name + '" name="' + f.name + '"' + required + '>\n';
@@ -521,14 +558,12 @@ class Scaffer {
                 html += '          </div>\n';
             }
 
-            // Close row every 2 fields or at the end
             if ((i + 1) % 2 === 0 && i + 1 < fields.length) {
                 html += '        </div>\n';
                 html += '        <div class="form-row">\n';
             }
         }
 
-        // Close the last form-row if it didn't end with a 2-field group
         if (fields.length % 2 !== 0 && fields.length > 0) {
             html += '        </div>\n';
         }
@@ -536,11 +571,71 @@ class Scaffer {
         html += '        </div>\n';
         html += '        <div style="margin-top:12px;display:flex;gap:8px;">\n';
         html += '          <button type="submit" class="btn-primary" id="saveBtn">Add Record</button>\n';
-        html += '          <button type="button" class="btn-warning" id="cancelBtn" style="display:none;" onclick="cancelEdit()">Cancel</button>\n';
+        if (!isModalEdit) {
+            html += '          <button type="button" class="btn-warning" id="cancelBtn" style="display:none;" onclick="cancelEdit()">Cancel</button>\n';
+        }
         html += '        </div>\n';
         html += '      </form>\n';
         html += '      <div id="formMessage"></div>\n';
         html += '    </div>\n\n';
+
+        // Edit modal (when editStyle === 'modal')
+        if (isModalEdit) {
+            html += '    <div id="editModal" class="modal-overlay">\n';
+            html += '      <div class="modal-box">\n';
+            html += '        <h2 id="modalFormTitle" style="margin:0 0 16px;">Edit ' + displayName + '</h2>\n';
+            html += '        <form id="editModalForm">\n';
+
+            for (const f of fields) {
+                const required = f.notNull ? ' required' : '';
+                const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
+
+                if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
+                    const active = s.statusActiveValue;
+                    const inactive = s.statusInactiveValue;
+                    if (s.statusUiStyle === 'radio') {
+                        html += '          <div style="margin-bottom:8px;"><label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
+                        html += '            <label style="margin-right:8px;font-size:13px;"><input type="radio" name="' + f.name + '" value="' + active + '" /> ' + active.charAt(0).toUpperCase() + active.slice(1) + '</label>\n';
+                        html += '            <label style="font-size:13px;"><input type="radio" name="' + f.name + '" value="' + inactive + '" /> ' + inactive.charAt(0).toUpperCase() + inactive.slice(1) + '</label>\n';
+                        html += '          </div>\n';
+                    } else if (s.statusUiStyle === 'dropdown') {
+                        html += '          <select name="' + f.name + '"' + required + '>\n';
+                        html += '            <option value="' + active + '">' + active.charAt(0).toUpperCase() + active.slice(1) + '</option>\n';
+                        html += '            <option value="' + inactive + '">' + inactive.charAt(0).toUpperCase() + inactive.slice(1) + '</option>\n';
+                        html += '          </select><br>\n';
+                    } else if (s.statusUiStyle === 'toggle') {
+                        html += '          <div style="margin-bottom:8px;"><label style="font-size:12px;color:#888;display:block;">' + label + '</label>\n';
+                        html += '            <label class="switch" style="position:relative;display:inline-block;width:44px;height:24px;vertical-align:middle;">\n';
+                        html += '              <input type="checkbox" name="' + f.name + '" value="' + active + '" onchange="this.value=this.checked?\'' + active + '\':\'' + inactive + '\'">\n';
+                        html += '              <span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:24px;transition:.3s;"></span>\n';
+                        html += '            </label>\n';
+                        html += '          </div>\n';
+                    } else {
+                        html += '          <input type="text" name="' + f.name + '"' + required + '><br>\n';
+                    }
+                } else if (f.fk) {
+                    html += '          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
+                    html += '          <select id="editModal_' + tableName.toLowerCase() + '_' + f.name + '" name="' + f.name + '"' + required + '>\n';
+                    html += '            <option value="">Select ' + f.fk.table + '</option>\n';
+                    html += '          </select><br>\n';
+                } else if (f.type === 'REAL' || f.type === 'INTEGER') {
+                    html += '          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
+                    html += '          <input type="number" name="' + f.name + '" step="' + (f.type === 'REAL' ? 'any' : '1') + '"' + required + '><br>\n';
+                } else {
+                    html += '          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
+                    html += '          <input type="text" name="' + f.name + '"' + required + '><br>\n';
+                }
+            }
+
+            html += '          <div style="display:flex;gap:8px;margin-top:12px;">\n';
+            html += '            <button type="submit" class="btn-primary">Save Changes</button>\n';
+            html += '            <button type="button" class="btn-warning" onclick="closeEditModal()">Cancel</button>\n';
+            html += '          </div>\n';
+            html += '        </form>\n';
+            html += '      </div>\n';
+            html += '    </div>\n\n';
+        }
 
         // Table card
         html += '    <div class="card">\n';
@@ -554,9 +649,14 @@ class Scaffer {
         // JavaScript
         html += '  <script>\n';
         html += '    const API = "' + api + '";\n';
-        html += '    let editId = null;\n\n';
+        html += '    let editId = null;\n';
+        if (hasAuth) {
+            html += '    const _fetch = authFetch;\n';
+        } else {
+            html += '    const _fetch = window.fetch.bind(window);\n';
+        }
+        html += '\n';
 
-        html += '    // Load FK dropdown data on page load\n';
         html += '    async function loadFKData() {\n';
         html += '      try {\n';
         html += '        ' + fkFetchData + '\n';
@@ -567,7 +667,7 @@ class Scaffer {
         // Load records
         html += '    async function loadRecords() {\n';
         html += '      try {\n';
-        html += '        const res = await authFetch(API);\n';
+        html += '        const res = await _fetch(API);\n';
         html += '        if (!res.ok) throw new Error("Failed to load");\n';
         html += '        const data = await res.json();\n';
         html += '        const container = document.getElementById("recordsTable");\n';
@@ -577,126 +677,236 @@ class Scaffer {
         html += '        }\n';
         html += '        let html = \'<table><thead><tr>\';\n';
 
-        // Generate table headers
         for (const f of fields) {
             const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            html += "        html += '<th>" + label + "</th>';\\\n";
+            html += "        html += '<th>" + label + "</th>';\n";
         }
-        html += "        html += '<th>Actions</th></tr></thead><tbody>';\\\n";
+        html += "        html += '<th>Actions</th></tr></thead><tbody>';\n";
 
-        html += '        data.forEach(function(row) {\\\n';
-        html += "          html += '<tr>';\\\n";
+        html += '        data.forEach(function(row) {\n';
+        html += "          html += '<tr>';\n";
         for (const f of fields) {
-            html += "          html += '<td>' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\\\n";
-        }
-        html += "          html += '<td class=\"actions\">';\\\n";
-        html += "          html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(" + pkName + ")\">Edit</button> ';\\\n";
-        if (hasStat) {
-            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button>';\\\n";
-        } else {
-            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\\\n";
-        }
-        html += "          html += '</td></tr>';\\\n";
-        html += '        });\\\n';
-        html += "        html += '</tbody></table>';\\\n";
-        html += '        container.innerHTML = html;\\\n';
-        html += '      } catch (err) {\\\n';
-        html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + err.message + '</p>';\\\n";
-        html += '      }\\\n';
-        html += '    }\\\n\n';
-
-        // Form submit handler
-        html += "    document.getElementById('recordForm').onsubmit = async function(e) {\\\n";
-        html += '      e.preventDefault();\\\n';
-        html += "      const form = e.target;\\\n";
-        html += "      const data = Object.fromEntries(new FormData(form));\\\n";
-        html += "      const msg = document.getElementById('formMessage');\\\n";
-        html += '      try {\\\n';
-        html += '        if (editId) {\\\n';
-        html += "          await authFetch(API + '/' + editId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\\\n";
-        html += '          editId = null;\\\n';
-        html += "          document.getElementById('saveBtn').textContent = 'Add Record';\\\n";
-        html += "          document.getElementById('formTitle').textContent = 'Add " + displayName + "';\\\n";
-        html += "          document.getElementById('cancelBtn').style.display = 'none';\\\n";
-        html += "          msg.innerHTML = '<div class=\\\"message message-success\\\">Record updated successfully!</div>';\\\n";
-        html += '        } else {\\\n';
-        html += "          const res = await authFetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\\\n";
-        html += "          if (!res.ok) { const err = await res.json(); throw new Error(err.error); }\\\n";
-        html += "          msg.innerHTML = '<div class=\\\"message message-success\\\">Record added successfully!</div>';\\\n";
-        html += '        }\\\n';
-        html += '        form.reset();\\\n';
-        html += '        loadRecords();\\\n';
-        html += "        setTimeout(function() { msg.innerHTML = ''; }, 3000);\\\n";
-        html += '      } catch (err) {\\\n';
-        html += "        msg.innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\\\n";
-        html += '      }\\\n';
-        html += '    };\\\n\n';
-
-        // Edit record
-        html += '    async function editRecord(id) {\
-\\n';
-        html += '      try {\\\n';
-        html += '        const res = await authFetch(API + \'/\' + id);\\\n';
-        html += '        if (!res.ok) throw new Error(\'Failed to fetch record\');\\\n';
-        html += '        const row = await res.json();\
-\\n';
-        html += '        editId = id;\\\n';
-        for (const f of fields) {
-            if (f.fk) {
-                html += '        ' + fkEditPopulate + '\\\n';
+            const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
+            if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
+                const active = s.statusActiveValue;
+                const inactive = s.statusInactiveValue;
+                html += "          html += '<td>' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
             } else {
-                html += "        if (document.querySelector('[name=\\\"" + f.name + "\\\"]')) document.querySelector('[name=\\\"" + f.name + "\\\"]').value = row." + f.name + " != null ? row." + f.name + " : '';\\\n";
+                html += "          html += '<td>' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
             }
         }
-        html += "        document.getElementById('saveBtn').textContent = 'Update Record';\\\n";
-        html += "        document.getElementById('formTitle').textContent = 'Edit " + displayName + "';\\\n";
-        html += "        document.getElementById('cancelBtn').style.display = 'inline-block';\\\n";
-        html += "        document.getElementById('formMessage').innerHTML = '';\\\n";
+        html += "          html += '<td class=\"actions\">';\n";
+        html += "          html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
+        if (hasStat) {
+            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ';\n";
+            if (showDelete) {
+                html += "          html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
+            }
+        } else {
+            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+        }
+        html += "          html += '</td></tr>';\n";
+        html += '        });\n';
+        html += "        html += '</tbody></table>';\n";
+        html += '        container.innerHTML = html;\n';
         html += '      } catch (err) {\n';
-        html += "        alert('Error: ' + err.message);\n";
+        html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + err.message + '</p>';\n";
         html += '      }\n';
         html += '    }\n\n';
 
-        // Cancel edit
-        html += '    function cancelEdit() {\\\n';
-        html += '      editId = null;\\\n';
-        html += "      document.getElementById('recordForm').reset();\\\n";
-        html += "      document.getElementById('saveBtn').textContent = 'Add Record';\\\n";
-        html += "      document.getElementById('formTitle').textContent = 'Add " + displayName + "';\\\n";
-        html += "      document.getElementById('cancelBtn').style.display = 'none';\\\n";
-        html += "      document.getElementById('formMessage').innerHTML = '';\\\n";
-        html += '    }\\\n\n';
-
-        // Deactivate record
-        if (hasStat) {
-            html += '    async function deactivateRecord(id) {\\\n';
-            html += "      if (!confirm('Deactivate this record?')) return;\\\n";
-            html += '      try {\\\n';
-            html += "        await authFetch(API + '/' + id, { method: 'DELETE' });\\\n";
-            html += '        loadRecords();\\\n';
-            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record deactivated.</div>';\\\n";
-            html += '      } catch (err) {\\\n';
-            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\\\n";
-            html += '      }\\\n';
-            html += '    }\\\n\n';
+        // Form submit handler (only creates when modal; also updates when inline)
+        html += "    document.getElementById('recordForm').onsubmit = async function(e) {\n";
+        html += '      e.preventDefault();\n';
+        html += "      const form = e.target;\n";
+        html += "      const data = Object.fromEntries(new FormData(form));\n";
+        html += "      const msg = document.getElementById('formMessage');\n";
+        html += '      try {\n';
+        if (isModalEdit) {
+            html += "        const res = await _fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
+            html += "        if (!res.ok) { const err = await res.json(); throw new Error(err.error); }\n";
+            html += "        msg.innerHTML = '<div class=\\\"message message-success\\\">Record added successfully!</div>';\n";
         } else {
-            html += '    async function deleteRecord(id) {\\\n';
-            html += "      if (!confirm('Delete this record?')) return;\\\n";
-            html += '      try {\\\n';
-            html += "        await authFetch(API + '/' + id, { method: 'DELETE' });\\\n";
-            html += '        loadRecords();\\\n';
-            html += '      } catch (err) {\\\n';
-            html += '        alert(err.message);\\\n';
-            html += '      }\\\n';
-            html += '    }\\\n\n';
+            html += '        if (editId) {\n';
+            html += "          await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
+            html += '          editId = null;\n';
+            html += "          document.getElementById('saveBtn').textContent = 'Add Record';\n";
+            html += "          document.getElementById('formTitle').textContent = 'Add " + displayName + "';\n";
+            html += "          document.getElementById('cancelBtn').style.display = 'none';\n";
+            html += "          msg.innerHTML = '<div class=\\\"message message-success\\\">Record updated successfully!</div>';\n";
+            html += '        } else {\n';
+            html += "          const res = await _fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
+            html += "          if (!res.ok) { const err = await res.json(); throw new Error(err.error); }\n";
+            html += "          msg.innerHTML = '<div class=\\\"message message-success\\\">Record added successfully!</div>';\n";
+            html += '        }\n';
+        }
+        html += '        form.reset();\n';
+        html += '        loadRecords();\n';
+        html += "        setTimeout(function() { msg.innerHTML = ''; }, 3000);\n";
+        html += '      } catch (err) {\n';
+        html += "        msg.innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+        html += '      }\n';
+        html += '    };\n\n';
+
+        if (isModalEdit) {
+            // Modal edit functions
+            html += '    function openEditModal(id, row) {\n';
+            html += '      editId = id;\n';
+            for (const f of fields) {
+                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
+                if (f.fk) {
+                    const selectId = 'editModal_' + tableName.toLowerCase() + '_' + f.name;
+                    html += "      if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
+                } else if (isStatus && s.statusUiStyle === 'radio') {
+                    html += "      document.querySelectorAll('#editModalForm input[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value === row." + f.name + "); });\n";
+                } else if (isStatus && s.statusUiStyle === 'toggle') {
+                    html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else {
+                    html += "      var el = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (el) el.value = row." + f.name + " != null ? row." + f.name + " : '';\n";
+                }
+            }
+            html += "      document.getElementById('editModal').style.display = 'flex';\n";
+            html += '    }\n\n';
+
+            html += '    function closeEditModal() {\n';
+            html += "      document.getElementById('editModal').style.display = 'none';\n";
+            html += '      editId = null;\n';
+            html += '    }\n\n';
+
+            html += "    document.getElementById('editModalForm').onsubmit = async function(e) {\n";
+            html += '      e.preventDefault();\n';
+            html += "      const data = Object.fromEntries(new FormData(e.target));\n";
+            html += '      try {\n';
+            html += "        await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
+            html += '        closeEditModal();\n';
+            html += '        loadRecords();\n';
+            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record updated!</div>';\n";
+            html += '        setTimeout(function() { document.getElementById(\'formMessage\').innerHTML = \'\'; }, 3000);\n';
+            html += '      } catch (err) {\n';
+            html += "        alert('Error: ' + err.message);\n";
+            html += '      }\n';
+            html += '    };\n\n';
+
+            // Edit record - opens modal
+            html += '    async function editRecord(id) {\n';
+            html += '      try {\n';
+            html += '        const res = await _fetch(API + \'/\' + id);\n';
+            html += '        if (!res.ok) throw new Error(\'Failed to fetch record\');\n';
+            html += '        const row = await res.json();\n';
+            html += '        openEditModal(id, row);\n';
+
+            // Populate modal FK dropdowns
+            for (const f of fkFields) {
+                const selectId = 'editModal_' + tableName.toLowerCase() + '_' + f.name;
+                html += '        ' + "await populateFKDropdown('" + selectId + "', '/api/" + f.fk.table.toLowerCase() + "', '" + this._getPK(f.fk.table) + "');\n";
+            }
+
+            html += '      } catch (err) {\n';
+            html += "        alert('Error: ' + err.message);\n";
+            html += '      }\n';
+            html += '    }\n\n';
+
+            // Helper to populate FK dropdown
+            html += '    async function populateFKDropdown(selectId, apiUrl, pkField) {\n';
+            html += '      try {\n';
+            html += '        const sel = document.getElementById(selectId);\n';
+            html += '        if (!sel) return;\n';
+            html += '        const res = await _fetch(apiUrl);\n';
+            html += '        const items = await res.json();\n';
+            html += '        items.forEach(function(item) {\n';
+            html += '          const opt = document.createElement(\'option\');\n';
+            html += '          opt.value = item[pkField];\n';
+            html += '          opt.textContent = Object.values(item).filter(v => v !== null && v !== undefined).join(\' - \');\n';
+            html += '          sel.appendChild(opt);\n';
+            html += '        });\n';
+            html += '      } catch (e) {}\n';
+            html += '    }\n\n';
+
+        } else {
+            // Inline edit record (existing behavior)
+            html += '    async function editRecord(id) {\n';
+            html += '      try {\n';
+            html += '        const res = await _fetch(API + \'/\' + id);\n';
+            html += '        if (!res.ok) throw new Error(\'Failed to fetch record\');\n';
+            html += '        const row = await res.json();\n';
+            html += '        editId = id;\n';
+            for (const f of fields) {
+                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
+                if (f.fk) {
+                    const selectId = tableName.toLowerCase() + '_' + f.name;
+                    html += "        if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
+                } else if (isStatus && s.statusUiStyle === 'radio') {
+                    html += "        var rbs = document.querySelectorAll('input[name=\\\"" + f.name + "\\\"]');\n";
+                    html += "        rbs.forEach(function(rb) { rb.checked = (rb.value === row." + f.name + "); });\n";
+                } else if (isStatus && s.statusUiStyle === 'toggle') {
+                    html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]');\n";
+                    html += "        if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else {
+                    html += "        if (document.querySelector('[name=\\\"" + f.name + "\\\"]')) document.querySelector('[name=\\\"" + f.name + "\\\"]').value = row." + f.name + " != null ? row." + f.name + " : '';\n";
+                }
+            }
+            html += "        document.getElementById('saveBtn').textContent = 'Update Record';\n";
+            html += "        document.getElementById('formTitle').textContent = 'Edit " + displayName + "';\n";
+            html += "        document.getElementById('cancelBtn').style.display = 'inline-block';\n";
+            html += "        document.getElementById('formMessage').innerHTML = '';\n";
+            html += '      } catch (err) {\n';
+            html += "        alert('Error: ' + err.message);\n";
+            html += '      }\n';
+            html += '    }\n\n';
+
+            // Cancel edit
+            html += '    function cancelEdit() {\n';
+            html += '      editId = null;\n';
+            html += "      document.getElementById('recordForm').reset();\n";
+            html += "      document.getElementById('saveBtn').textContent = 'Add Record';\n";
+            html += "      document.getElementById('formTitle').textContent = 'Add " + displayName + "';\n";
+            html += "      document.getElementById('cancelBtn').style.display = 'none';\n";
+            html += "      document.getElementById('formMessage').innerHTML = '';\n";
+            html += '    }\n\n';
+        }
+
+        // Deactivate / Delete record
+        if (hasStat) {
+            html += '    async function deactivateRecord(id) {\n';
+            html += "      if (!confirm('Deactivate this record?')) return;\n";
+            html += '      try {\n';
+            html += "        await _fetch(API + '/' + id, { method: 'DELETE' });\n";
+            html += '        loadRecords();\n';
+            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record deactivated.</div>';\n";
+            html += '      } catch (err) {\n';
+            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+            html += '      }\n';
+            html += '    }\n\n';
+
+            if (showDelete) {
+                html += '    async function hardDeleteRecord(id) {\n';
+                html += "      if (!confirm('Permanently DELETE this record? This cannot be undone.')) return;\n";
+                html += '      try {\n';
+                html += "        await _fetch(API + '/' + id + '/delete', { method: 'POST' });\n";
+                html += '        loadRecords();\n';
+                html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record permanently deleted.</div>';\n";
+                html += '      } catch (err) {\n';
+                html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+                html += '      }\n';
+                html += '    }\n\n';
+            }
+        } else {
+            html += '    async function deleteRecord(id) {\n';
+            html += "      if (!confirm('Delete this record?')) return;\n";
+            html += '      try {\n';
+            html += "        await _fetch(API + '/' + id, { method: 'DELETE' });\n";
+            html += '        loadRecords();\n';
+            html += '      } catch (err) {\n';
+            html += '        alert(err.message);\n';
+            html += '      }\n';
+            html += '    }\n\n';
         }
 
         // Init
-        html += '    loadFKData();\\\n';
-        html += '    loadRecords();\\\n';
-        html += '  </script>\\\n';
-        html += '</body>\\\n';
-        html += '</html>\\\n';
+        html += '    loadFKData();\n';
+        html += '    loadRecords();\n';
+        html += '  </script>\n';
+        html += '</body>\n';
+        html += '</html>\n';
 
         return html;
     }

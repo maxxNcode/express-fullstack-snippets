@@ -92,117 +92,6 @@ class RuleEngine {
 
     /**
      * Generate a complete report HTML page with computed columns, percentages, and rankings.
-     * Delegates to QueryGenerator to avoid code duplication.
-     */
-    generateReportHtml(reportName, displayColumns) {
-        const { QueryGenerator } = require('./queryGenerator');
-        const qg = new QueryGenerator(this.schemaRegistry);
-        return qg.generateReportHtml(reportName, displayColumns || []);
-    }
-
-    /**
-     * Generate Express server route for a report.
-     * Delegates to QueryGenerator.
-     */
-    generateReportServer(reportName, baseColumns, computedColumns, rankColumns, filters, sortBy, limit, groupBy, having, distinct, joinType) {
-        const { QueryGenerator } = require('./queryGenerator');
-        const qg = new QueryGenerator(this.schemaRegistry);
-        return qg.generateReportServer(reportName, baseColumns, computedColumns, filters, sortBy, limit, groupBy, having, distinct, joinType);
-    }
-        let sql = distinct ? 'SELECT DISTINCT\n' : 'SELECT\n';
-        const parts = [];
-        const windowRefs = [];
-
-        // Add base columns
-        for (const col of baseColumns) {
-            let expr = `${col.table}.${col.field}`;
-            if (col.aggregate) {
-                expr = `${col.aggregate.toUpperCase()}(${expr})`;
-            }
-            parts.push(`  ${expr} AS ${col.table}_${col.field}`);
-        }
-
-        // Add computed columns (percentage, running total, etc.)
-        if (computedColumns) {
-            for (const comp of computedColumns) {
-                let expr = this._expandComputedExpression(comp.expression, comp);
-                parts.push(`  ${expr} AS ${comp.name}`);
-            }
-        }
-
-        // Add rank columns (DENSE_RANK, ROW_NUMBER, etc.)
-        if (rankColumns) {
-            for (const rank of rankColumns) {
-                const orderExpr = `${rank.orderTable}.${rank.orderField} ${rank.orderDir || 'DESC'}`;
-                const partitionExpr = rank.partitionField
-                    ? `PARTITION BY ${rank.partitionTable}.${rank.partitionField}`
-                    : '';
-                const func = rank.function || 'DENSE_RANK';
-                const expr = `${func}() OVER (${partitionExpr} ORDER BY ${orderExpr})`;
-                parts.push(`  ${expr} AS ${rank.name || 'rank'}`);
-            }
-        }
-
-        sql += parts.join(',\n');
-
-        // FROM + JOINs
-        if (baseColumns.length > 0) {
-            const allTables = [...new Set(baseColumns.map(c => c.table))];
-            const { mainTable, joins } = this._resolveJoins(allTables, joinType || 'LEFT');
-            sql += `\nFROM ${mainTable}\n`;
-            if (joins.length > 0) {
-                sql += joins.join('\n');
-            }
-        }
-
-        // WHERE
-        if (filters && filters.length > 0) {
-            const whereClauses = filters.map(f => {
-                const op = f.operator || '=';
-                let val = f.value;
-                if (op !== 'IS NULL' && op !== 'IS NOT NULL') {
-                    val = this._quoteSqlValue(val);
-                }
-                const nullOps = ['IS NULL', 'IS NOT NULL'];
-                return `    ${f.table}.${f.field} ${op}${nullOps.includes(op) ? '' : ' ' + val}`;
-            });
-            sql += `\nWHERE ${whereClauses.join('\n  AND ')}`;
-        }
-
-        // GROUP BY
-        if (groupBy && groupBy.length > 0) {
-            const groupParts = groupBy.map(g => `${g.table}.${g.field}`);
-            sql += `\nGROUP BY ${groupParts.join(', ')}`;
-        }
-
-        // HAVING
-        if (having && having.length > 0) {
-            const havingClauses = having.map(h => {
-                let expr = `${h.table}.${h.field}`;
-                if (h.aggregate) expr = `${h.aggregate.toUpperCase()}(${expr})`;
-                const op = h.operator || '=';
-                const val = op === 'IS NULL' || op === 'IS NOT NULL' ? '' : ` ${this._quoteSqlValue(h.value)}`;
-                return `    ${expr} ${op}${val}`;
-            });
-            sql += `\nHAVING ${havingClauses.join('\n  AND ')}`;
-        }
-
-        // ORDER BY
-        if (sortBy && sortBy.table && sortBy.field) {
-            sql += `\nORDER BY ${sortBy.table}.${sortBy.field} ${(sortBy.direction || 'ASC')}`;
-        }
-
-        // LIMIT
-        if (limit && parseInt(limit) > 0) {
-            sql += `\nLIMIT ${parseInt(limit)}`;
-        }
-
-        sql += ';';
-        return sql;
-    }
-
-    /**
-     * Generate a complete report HTML page with computed columns, percentages, and rankings.
      * @param {string} reportName - Name for the report
      * @param {Array} displayColumns - What columns to display { label, field, format, highlight }
      * @returns {string} Complete HTML page
@@ -400,7 +289,8 @@ class RuleEngine {
             // Generate the appropriate check based on the rule
             if (rule.operator === '=' || rule.operator === '!=') {
                 const val = this._quoteSqlValue(rule.checkValue);
-                code += `    const row${i} = db.prepare(\`SELECT ${rule.checkField} FROM ${rule.checkTable} WHERE \${req.body.${this._inferIdentityField(rule.checkTable)}} = ?\`).get(req.body.${this._inferIdentityField(rule.checkTable)});\n`;
+                const identityField = this._inferIdentityField(rule.checkTable);
+                code += `    const row${i} = db.prepare(\`SELECT ${rule.checkField} FROM ${rule.checkTable} WHERE ${identityField} = ?\`).get(req.body.${identityField});\n`;
                 if (rule.operator === '=') {
                     code += `    if (!row${i} || String(row${i}.${rule.checkField}) !== String(${val})) {\n`;
                 } else {
@@ -425,7 +315,8 @@ class RuleEngine {
 
             code += `    // Limit ${i + 1}: ${msg}\n`;
             code += `    const count${i} = db.prepare(\`SELECT COUNT(*) as cnt FROM ${rule.targetTable} WHERE ${rule.groupField} = ?\`).get(req.body.${rule.groupField});\n`;
-            code += `    const limit${i} = db.prepare(\`SELECT ${rule.limitField} FROM ${rule.limitTable} WHERE \${this._getPK(rule.limitTable)} = ?\`).get(req.body.${rule.groupField});\n`;
+            const limitPK = this._getPK(rule.limitTable);
+            code += `    const limit${i} = db.prepare(\`SELECT ${rule.limitField} FROM ${rule.limitTable} WHERE ${limitPK} = ?\`).get(req.body.${rule.groupField});\n`;
             code += `    if (count${i} && limit${i} && count${i}.cnt >= limit${i}.${rule.limitField}) {\n`;
             code += `      errors.push('${msg.replace(/'/g, "\\'")}');\n`;
             code += '    }\n\n';

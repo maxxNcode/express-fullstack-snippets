@@ -29,6 +29,10 @@
             vscode.postMessage({ command: 'generateTable', tableName: name });
         }
 
+        function extractSchemaSql() {
+            vscode.postMessage({ command: 'extractSchemaSql' });
+        }
+
         function refresh() {
             vscode.postMessage({ command: 'refresh' });
         }
@@ -665,6 +669,8 @@
             } else if (msg.command === 'actionRoutePreviewResult') {
                 var arTa = document.getElementById('actionRoutePreview');
                 if (arTa) arTa.value = msg.code || '// No route to preview';
+            } else if (msg.command === 'tableSettingsReceived') {
+                populateTableSettings(msg.settings, msg.fields || []);
             }
         });
 
@@ -975,9 +981,10 @@
             var hasPassword = !!authState.passwordField;
             var hasRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : false;
             var hasRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
+            var hasLogout = document.getElementById('authOptLogout') ? document.getElementById('authOptLogout').checked : false;
             var hasHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : false;
             var hasRegisterHtml = document.getElementById('authOptRegisterHtml') ? document.getElementById('authOptRegisterHtml').checked : false;
-            var enabled = authState.table && hasIdentity && hasPassword && (hasRoute || hasRegister || hasHtml || hasRegisterHtml);
+            var enabled = authState.table && hasIdentity && hasPassword && (hasRoute || hasRegister || hasLogout || hasHtml || hasRegisterHtml);
             var genBtn = document.getElementById('authGenBtn');
             var prevBtn = document.getElementById('authPrevBtn');
             if (genBtn) genBtn.disabled = !enabled;
@@ -988,10 +995,15 @@
             if (!authState.table || authState.identityFields.length === 0 || !authState.passwordField) return;
             var genRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : true;
             var genRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
+            var genLogout = document.getElementById('authOptLogout') ? document.getElementById('authOptLogout').checked : false;
             var genHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : true;
             var genRegisterHtml = document.getElementById('authOptRegisterHtml') ? document.getElementById('authOptRegisterHtml').checked : false;
             var useJwt = document.getElementById('authOptJwt') ? document.getElementById('authOptJwt').checked : true;
             var useBcrypt = document.getElementById('authOptBcrypt') ? document.getElementById('authOptBcrypt').checked : true;
+            var useRefreshToken = document.getElementById('authOptRefreshToken') ? document.getElementById('authOptRefreshToken').checked : true;
+            var useRateLimiter = document.getElementById('authOptRateLimiter') ? document.getElementById('authOptRateLimiter').checked : true;
+            var secretStorage = document.getElementById('authOptSecretStorage') ? document.getElementById('authOptSecretStorage').value : 'env';
+            var dbStorage = document.getElementById('authOptDbStorage') ? document.getElementById('authOptDbStorage').value : 'server';
             vscode.postMessage({
                 command: 'generateAuth',
                 tableName: authState.table,
@@ -1001,8 +1013,13 @@
                 options: {
                     useJwt: useJwt,
                     useBcrypt: useBcrypt,
+                    useRefreshToken: useRefreshToken,
+                    useRateLimiter: useRateLimiter,
+                    secretStorage: secretStorage,
+                    dbStorage: dbStorage,
                     generateRoute: genRoute,
                     generateRegister: genRegister,
+                    generateLogout: genLogout,
                     generateHtml: genHtml,
                     generateRegisterHtml: genRegisterHtml
                 }
@@ -1013,10 +1030,15 @@
             if (!authState.table || authState.identityFields.length === 0 || !authState.passwordField) return;
             var genRoute = document.getElementById('authOptRoute') ? document.getElementById('authOptRoute').checked : true;
             var genRegister = document.getElementById('authOptRegister') ? document.getElementById('authOptRegister').checked : false;
+            var genLogout = document.getElementById('authOptLogout') ? document.getElementById('authOptLogout').checked : false;
             var genHtml = document.getElementById('authOptHtml') ? document.getElementById('authOptHtml').checked : true;
             var genRegisterHtml = document.getElementById('authOptRegisterHtml') ? document.getElementById('authOptRegisterHtml').checked : false;
             var useJwt = document.getElementById('authOptJwt') ? document.getElementById('authOptJwt').checked : true;
             var useBcrypt = document.getElementById('authOptBcrypt') ? document.getElementById('authOptBcrypt').checked : true;
+            var useRefreshToken = document.getElementById('authOptRefreshToken') ? document.getElementById('authOptRefreshToken').checked : true;
+            var useRateLimiter = document.getElementById('authOptRateLimiter') ? document.getElementById('authOptRateLimiter').checked : true;
+            var secretStorage = document.getElementById('authOptSecretStorage') ? document.getElementById('authOptSecretStorage').value : 'env';
+            var dbStorage = document.getElementById('authOptDbStorage') ? document.getElementById('authOptDbStorage').value : 'server';
             vscode.postMessage({
                 command: 'previewAuthSql',
                 tableName: authState.table,
@@ -1027,8 +1049,13 @@
                 options: {
                     useJwt: useJwt,
                     useBcrypt: useBcrypt,
+                    useRefreshToken: useRefreshToken,
+                    useRateLimiter: useRateLimiter,
+                    secretStorage: secretStorage,
+                    dbStorage: dbStorage,
                     generateRoute: genRoute,
                     generateRegister: genRegister,
+                    generateLogout: genLogout,
                     generateHtml: genHtml,
                     generateRegisterHtml: genRegisterHtml
                 }
@@ -1468,8 +1495,7 @@
                     checkField: parts[1] || fieldVal,
                     operator: document.getElementById('arPC_Op' + idx).value,
                     checkValue: document.getElementById('arPC_Value' + idx).value,
-                    errorMessage: document.getElementById('arPC_Msg' + idx).value,
-                    identityField: parts[1] || fieldVal
+                    errorMessage: document.getElementById('arPC_Msg' + idx).value
                 });
             });
             return checks;
@@ -1505,7 +1531,6 @@
                     setField: document.getElementById('arPA_SetField' + idx).value,
                     setValue: document.getElementById('arPA_SetValue' + idx).value,
                     whereField: parts[1] || whereVal,
-                    whereSourceField: parts[1] || whereVal,
                     description: 'Update ' + document.getElementById('arPA_SetTable' + idx).value + '.' + document.getElementById('arPA_SetField' + idx).value
                 });
             });
@@ -1519,7 +1544,7 @@
                 name: document.getElementById('arName').value,
                 description: document.getElementById('arDescription').value,
                 targetTable: document.getElementById('arTargetTable').value,
-                method: 'POST',
+                method: document.getElementById('arMethod').value,
                 useJwt: document.getElementById('arUseJwt').value === 'true',
                 identityField: identityParts[1] || identityField,
                 preChecks: collectArPreChecks(),
@@ -1550,6 +1575,76 @@
         function generateActionRoute() {
             var route = buildActionRoute();
             vscode.postMessage({ command: 'generateActionRoute', route: route });
+        }
+
+        // --- Table Settings ---
+
+        var _settingsTableName = null;
+
+        function openTableSettings(tableName, event) {
+            if (event) event.stopPropagation();
+            _settingsTableName = tableName;
+            document.getElementById('tableSettingsTitle').textContent = 'Settings: ' + tableName;
+            document.getElementById('tableSettingsOverlay').style.display = 'block';
+            var sel = document.getElementById('tsStatusField');
+            while (sel.options.length > 2) sel.remove(2);
+            vscode.postMessage({ command: 'getTableSettings', tableName: tableName });
+        }
+
+        function closeTableSettings(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('tableSettingsOverlay').style.display = 'none';
+            _settingsTableName = null;
+        }
+
+        function populateTableSettings(settings, fields) {
+            var sel = document.getElementById('tsStatusField');
+            while (sel.options.length > 2) sel.remove(2);
+            fields.forEach(function(f) {
+                var opt = document.createElement('option');
+                opt.value = f.name;
+                opt.textContent = f.name + ' (' + (f.type || 'TEXT') + ')';
+                sel.appendChild(opt);
+            });
+            var currentStatus = settings.statusField || '';
+            if (currentStatus && fields.some(function(f) { return f.name === currentStatus; })) {
+                sel.value = currentStatus;
+            } else if (currentStatus === '__none__') {
+                sel.value = '__none__';
+            } else {
+                sel.value = '';
+            }
+            var uiRadios = document.querySelectorAll('input[name="tsStatusUi"]');
+            uiRadios.forEach(function(r) {
+                r.checked = (r.value === (settings.statusUiStyle || 'radio'));
+            });
+            document.getElementById('tsStatusActive').value = settings.statusActiveValue || 'active';
+            document.getElementById('tsStatusInactive').value = settings.statusInactiveValue || 'inactive';
+            var editModeRadios = document.querySelectorAll('input[name="tsEditMode"]');
+            editModeRadios.forEach(function(r) {
+                r.checked = (r.value === (settings.editMode || 'put'));
+            });
+            var editStyleRadios = document.querySelectorAll('input[name="tsEditStyle"]');
+            editStyleRadios.forEach(function(r) {
+                r.checked = (r.value === (settings.editStyle || 'form'));
+            });
+            document.getElementById('tsShowDelete').checked = settings.showDeleteButton === true;
+        }
+
+        function saveTableSettings() {
+            var tableName = _settingsTableName;
+            if (!tableName) return;
+            var settings = {
+                statusField: document.getElementById('tsStatusField').value,
+                statusUiStyle: document.querySelector('input[name="tsStatusUi"]:checked').value,
+                statusActiveValue: document.getElementById('tsStatusActive').value.trim(),
+                statusInactiveValue: document.getElementById('tsStatusInactive').value.trim(),
+                editMode: document.querySelector('input[name="tsEditMode"]:checked').value,
+                editStyle: document.querySelector('input[name="tsEditStyle"]:checked').value,
+                showDeleteButton: document.getElementById('tsShowDelete').checked
+            };
+            vscode.postMessage({ command: 'setTableSettings', tableName: tableName, settings: settings });
+            closeTableSettings();
         }
 
         // --- end Action Routes ---
