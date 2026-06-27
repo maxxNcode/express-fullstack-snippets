@@ -70,8 +70,8 @@
         border: 1px solid #3c3c3c;
         border-radius: 10px;
         overflow: hidden;
-        width: 320px;
-        flex-shrink: 0;
+        min-width: 280px;
+        flex: 1 1 auto;
     }
     .table-card-header {
         background: #2d2d2d;
@@ -114,7 +114,11 @@
     .field-name {
         font-family: 'Consolas', 'Courier New', monospace;
         font-size: 13px;
-        flex: 1;
+        flex: 0 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 40px;
     }
     .field-type {
         font-size: 11px;
@@ -123,11 +127,13 @@
         background: #1e1e1e;
         padding: 2px 6px;
         border-radius: 4px;
+        flex-shrink: 0;
     }
     .field-constraints {
         display: flex;
         gap: 4px;
         font-size: 10px;
+        flex-shrink: 0;
     }
     .badge {
         padding: 1px 6px;
