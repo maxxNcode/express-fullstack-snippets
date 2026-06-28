@@ -23,6 +23,8 @@
  *   const scaffolder = new Scaffer(schemaRegistry, codeGenerator, authGenerator, ruleEngine);
  *   const files = scaffolder.generateAll(tableNames, authConfig, rules);
  */
+const ScreenGenerator = require('./screenGenerator');
+
 class Scaffer {
     constructor(schemaRegistry) {
         const { CodeGenerator } = require('./generator');
@@ -33,6 +35,7 @@ class Scaffer {
         this.codeGen = new CodeGenerator(schemaRegistry);
         this.authGen = new AuthGenerator(schemaRegistry);
         this.ruleEngine = new RuleEngine(schemaRegistry);
+        this.screenGen = new ScreenGenerator(schemaRegistry);
     }
 
     /**
@@ -92,6 +95,45 @@ class Scaffer {
                 } else {
                     // Generic report using rule engine
                     files[`public/${report.name}.html`] = this.ruleEngine.generateReportHtml(report.name, cols);
+                }
+            }
+        }
+
+        // Generate screen pages
+        const screens = this.schemaRegistry.getScreens();
+        if (screens && screens.length > 0) {
+            for (const screen of screens) {
+                if (screen.type === 'transaction') {
+                    files[`public/${screen.name}.html`] = this.screenGen.generateTransactionPage(screen);
+                    const dataRoute = this.screenGen.generateTransactionDataRoute(screen);
+                    if (dataRoute) {
+                        serverContent = serverContent.replace('// Error handling middleware', dataRoute + '\n\n// Error handling middleware');
+                    }
+                    // Generate submit endpoint from action route
+                    const actionRoutes = this.schemaRegistry.getActionRoutes();
+                    const actionRoute = actionRoutes.find(r => r.name === screen.input.actionRoute);
+                    if (actionRoute) {
+                        const actionCode = this._generateActionRouteCode(actionRoute);
+                        const submitRoute = actionCode.replace(
+                            `app.${actionRoute.method || 'POST'}('/api/${actionRoute.name}'`,
+                            `app.post('/api/${screen.name}/submit'`
+                        );
+                        serverContent = serverContent.replace('// Error handling middleware', submitRoute + '\n\n// Error handling middleware');
+                    }
+                } else if (screen.type === 'report') {
+                    files[`public/${screen.name}.html`] = this.screenGen.generateReportPage(screen);
+                    if (screen.query) {
+                        const query = this.schemaRegistry.getQuery(screen.query);
+                        if (query) {
+                            const reportRoute = this.codeGen.generateReportServer(screen.name, query.columns, null, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
+                            serverContent = serverContent.replace('// Error handling middleware', reportRoute + '\n\n// Error handling middleware');
+                        }
+                    }
+                } else if (screen.type === 'widget') {
+                    const widgetHtml = this.screenGen.generateWidgetHtml(screen);
+                    if (files['public/dashboard.html']) {
+                        files['public/dashboard.html'] = files['public/dashboard.html'].replace('</div>\n</body>', widgetHtml + '\n</div>\n</body>');
+                    }
                 }
             }
         }
@@ -1085,6 +1127,56 @@ class Scaffer {
         if (!table) return 'id';
         const pk = table.fields.find(f => f.pk);
         return pk ? pk.name : ((table.fields && table.fields[0]) ? table.fields[0].name : 'id');
+    }
+
+    _generateActionRouteCode(route) {
+        let code = `\n// Action Route: ${route.name} - ${route.description || ''}\n`;
+        const method = (route.method || 'POST').toLowerCase();
+        const authMiddleware = route.useJwt ? ', authenticate' : '';
+        code += `app.${method}('/api/${route.name}'${authMiddleware}, async (req, res) => {\n`;
+        code += `    try {\n`;
+        if (route.useJwt && route.identityField) {
+            code += `        const userId = req.user.id;\n`;
+        }
+        if (route.preChecks && route.preChecks.length > 0) {
+            for (const pc of route.preChecks) {
+                const identity = pc.identityField || route.identityField;
+                code += `        const ${pc.checkTable}Check = db.prepare(\`SELECT ${pc.checkField} FROM ${pc.checkTable} WHERE ${identity} = ?\`).get(userId);\n`;
+                code += `        if (!${pc.checkTable}Check || !(${pc.checkTable}Check.${pc.checkField} ${pc.operator} '${pc.checkValue}')) {\n`;
+                code += `            return res.status(403).json({ error: '${pc.errorMessage || 'Pre-check failed'}' });\n`;
+                code += `        }\n`;
+            }
+        }
+        if (route.limitChecks && route.limitChecks.length > 0) {
+            for (const lc of route.limitChecks) {
+                code += `        const count = db.prepare(\`SELECT COUNT(*) as cnt FROM ${lc.countTable} WHERE ${lc.groupField} = ?\`).get(userId);\n`;
+                if (lc.limitTable && lc.limitField) {
+                    code += `        const limit = db.prepare(\`SELECT ${lc.limitField} FROM ${lc.limitTable} LIMIT 1\`).get();\n`;
+                    code += `        if (count.cnt >= limit.${lc.limitField}) {\n`;
+                    code += `            return res.status(403).json({ error: '${lc.errorMessage || 'Limit exceeded'}' });\n`;
+                    code += `        }\n`;
+                }
+            }
+        }
+        const table = this.schemaRegistry.getTable(route.targetTable);
+        if (table) {
+            const nonPK = (table.fields || []).filter(f => !f.pk);
+            const cols = nonPK.map(f => f.name).join(', ');
+            code += `        const stmt = db.prepare(\`INSERT INTO ${route.targetTable} (${cols}) VALUES (${nonPK.map(() => '?').join(', ')})\`);\n`;
+            code += `        const result = stmt.run(${nonPK.map(f => `req.body.${f.name}`).join(', ')});\n`;
+        }
+        if (route.postActions && route.postActions.length > 0) {
+            for (const pa of route.postActions) {
+                code += `        db.prepare(\`UPDATE ${pa.setTable} SET ${pa.setField} = ${pa.setValue} WHERE ${pa.whereField} = ?\`).run(req.body.${pa.whereField});\n`;
+            }
+        }
+        code += `        res.status(201).json({ success: true, id: result ? result.lastInsertRowid : null });\n`;
+        code += `    } catch (err) {\n`;
+        code += `        console.error('Error in ${route.name}:', err);\n`;
+        code += `        res.status(500).json({ error: err.message });\n`;
+        code += `    }\n`;
+        code += `});\n`;
+        return code;
     }
 }
 
