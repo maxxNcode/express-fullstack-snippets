@@ -606,12 +606,45 @@ class Scaffer {
                     html += '              <option value="">Select ' + f.fk.table + '</option>\n';
                     html += '            </select>\n';
                     html += '          </div>\n';
-                } else if (uiType === 'checkbox') {
+                } else if (uiType === 'select') {
                     html += '          <div>\n';
-                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">\n';
-                    html += '              <input type="checkbox" name="' + f.name + '" value="1"> ' + label + '\n';
-                    html += '            </label>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <select name="' + f.name + '"' + required + '>\n';
+                    html += '              <option value="">Select ' + label + '</option>\n';
+                    if (f.options) {
+                        for (const o of f.options) {
+                            html += '              <option value="' + o.value + '">' + o.label + '</option>\n';
+                        }
+                    }
+                    html += '            </select>\n';
                     html += '          </div>\n';
+                } else if (uiType === 'radio') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    if (f.options) {
+                        for (let i = 0; i < f.options.length; i++) {
+                            const o = f.options[i];
+                            html += '            <label style="display:block;font-size:13px;"><input type="radio" name="' + f.name + '" value="' + o.value + '"' + (i === 0 ? ' checked' : '') + '> ' + o.label + '</label>\n';
+                        }
+                    }
+                    html += '          </div>\n';
+                } else if (uiType === 'checkbox') {
+                    if (f.options && f.options.length > 0) {
+                        html += '          <div>\n';
+                        html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                        html += '            <input type="hidden" name="' + f.name + '" id="' + f.name + 'Val">\n';
+                        for (const o of f.options) {
+                            html += '            <label style="display:block;font-size:13px;"><input type="checkbox" data-field="' + f.name + '" value="' + o.value + '" onchange="update' + f.name + '()"> ' + o.label + '</label>\n';
+                        }
+                        html += '            <script>function update' + f.name + '(){var a=[];document.querySelectorAll(\'[data-field="' + f.name + '"]:checked\').forEach(function(c){a.push(c.value)});document.getElementById(\'' + f.name + 'Val\').value=a.join(\',\')}<\/script>\n';
+                        html += '          </div>\n';
+                    } else {
+                        html += '          <div>\n';
+                        html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">\n';
+                        html += '              <input type="checkbox" name="' + f.name + '" value="1"> ' + label + '\n';
+                        html += '            </label>\n';
+                        html += '          </div>\n';
+                    }
                 } else if (uiType === 'textarea') {
                     html += '          <div style="flex:1 1 100%;">\n';
                     html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
@@ -853,6 +886,9 @@ class Scaffer {
                 const active = s.statusActiveValue;
                 const inactive = s.statusInactiveValue;
                 html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
+            } else if (f.options && f.options.length > 0) {
+                const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
+                html += "        html += '<td data-field=\"" + f.name + "\">' + (" + optMap + "[row." + f.name + "] || (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '')) + '</td>';\n";
             } else {
                 html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
             }
@@ -932,7 +968,7 @@ class Scaffer {
         html += '      e.preventDefault();\n';
         html += "      const form = e.target;\n";
         html += "      var fd = new FormData(form);\n";
-        html += "      form.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (!cb.checked) fd.set(cb.name, '0'); });\n";
+        html += "      form.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (cb.name && !cb.checked) fd.set(cb.name, '0'); });\n";
         html += "      const data = Object.fromEntries(fd);\n";
         html += "      const msg = document.getElementById('formMessage');\n";
         html += '      try {\n';
@@ -976,6 +1012,12 @@ class Scaffer {
                     html += "      document.querySelectorAll('#editModalForm input[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value === row." + f.name + "); });\n";
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else if (uiType === 'select') {
+                    html += "      var sel = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (sel) sel.value = row." + f.name + " ?? '';\n";
+                } else if (uiType === 'radio') {
+                    html += "      document.querySelectorAll('#editModalForm [name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value == row." + f.name + "); });\n";
+                } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
+                    html += "      document.querySelectorAll('#editModalForm [data-field=\\\"" + f.name + "\\\"]').forEach(function(c) { c.checked = (String(row." + f.name + ").split(',').indexOf(c.value) !== -1); }); update" + f.name + "();\n";
                 } else if (uiType === 'checkbox') {
                     html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {
@@ -993,7 +1035,7 @@ class Scaffer {
             html += "    document.getElementById('editModalForm').onsubmit = async function(e) {\n";
             html += '      e.preventDefault();\n';
             html += "      var fd = new FormData(e.target);\n";
-            html += "      e.target.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (!cb.checked) fd.set(cb.name, '0'); });\n";
+            html += "      e.target.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (cb.name && !cb.checked) fd.set(cb.name, '0'); });\n";
             html += "      const data = Object.fromEntries(fd);\n";
             html += '      try {\n';
             html += "        await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
@@ -1061,6 +1103,12 @@ class Scaffer {
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]');\n";
                     html += "        if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else if (uiType === 'select') {
+                    html += "        var sel = document.querySelector('[name=\\\"" + f.name + "\\\"]'); if (sel) sel.value = row." + f.name + " ?? '';\n";
+                } else if (uiType === 'radio') {
+                    html += "        document.querySelectorAll('[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value == row." + f.name + "); });\n";
+                } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
+                    html += "        document.querySelectorAll('[data-field=\\\"" + f.name + "\\\"]').forEach(function(c) { c.checked = (String(row." + f.name + ").split(',').indexOf(c.value) !== -1); }); var hv = document.getElementById('" + f.name + "Val'); if (hv) hv.value = row." + f.name + " ?? '';\n";
                 } else if (uiType === 'checkbox') {
                     html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {

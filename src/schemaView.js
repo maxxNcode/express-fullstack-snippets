@@ -264,6 +264,9 @@ class SchemaViewProvider {
                     case 'setFieldUiType':
                         await this._handleSetFieldUiType(msg.tableName, msg.fieldName, msg.uiType);
                         break;
+                    case 'setFieldOptions':
+                        await this._handleSetFieldOptions(msg.tableName, msg.fieldName, msg.options);
+                        break;
                     case 'getScreens':
                         this._handleGetScreens();
                         break;
@@ -628,6 +631,24 @@ class SchemaViewProvider {
                 field.uiType = uiType;
             } else {
                 delete field.uiType;
+            }
+            await this.schemaRegistry.save();
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleSetFieldOptions(tableName, fieldName, options) {
+        try {
+            const table = this.schemaRegistry.getTable(tableName);
+            if (!table) throw new Error(`Table "${tableName}" not found`);
+            const field = table.fields.find(f => f.name === fieldName);
+            if (!field) throw new Error(`Field "${fieldName}" not found`);
+            if (options && options.length > 0) {
+                field.options = options;
+            } else {
+                delete field.options;
             }
             await this.schemaRegistry.save();
             this._refresh();
@@ -2172,6 +2193,8 @@ class SchemaViewProvider {
                     <option value="text"${field.uiType === 'text' ? ' selected' : ''}>text</option>
                     <option value="number"${field.uiType === 'number' ? ' selected' : ''}>number</option>
                     <option value="textarea"${field.uiType === 'textarea' ? ' selected' : ''}>textarea</option>
+                    <option value="select"${field.uiType === 'select' ? ' selected' : ''}>select</option>
+                    <option value="radio"${field.uiType === 'radio' ? ' selected' : ''}>radio</option>
                     <option value="fk-select"${field.uiType === 'fk-select' ? ' selected' : ''}>fk-select</option>
                     <option value="checkbox"${field.uiType === 'checkbox' ? ' selected' : ''}>checkbox</option>
                     <option value="date"${field.uiType === 'date' ? ' selected' : ''}>date</option>
@@ -2183,6 +2206,9 @@ class SchemaViewProvider {
                     <option value="color"${field.uiType === 'color' ? ' selected' : ''}>color</option>
                     <option value="hidden"${field.uiType === 'hidden' ? ' selected' : ''}>hidden</option>
                 </select>
+                <div class="field-options-editor" id="opts__${jsSafeTable}_${jsSafeField}" style="display:${field.uiType && ['select','radio','checkbox'].includes(field.uiType) ? '' : 'none'};font-size:12px;margin-top:4px;width:100%;">
+                    <textarea rows="2" placeholder="label=value per line" style="width:100%;font-size:11px;padding:2px 4px;" onchange="setFieldOptions('${jsSafeTable}', '${jsSafeField}', this.value)">${field.options ? field.options.map(function(o) { return o.label + '=' + o.value; }).join('\n') : ''}</textarea>
+                </div>
                 ${fkButton}
             </div>
         </div>`;

@@ -24,6 +24,21 @@
             vscode.postMessage({ command: 'setFieldUiType', tableName, fieldName, uiType });
         }
 
+        function setFieldOptions(tableName, fieldName, text) {
+            var opts = [];
+            text.split('\n').forEach(function(line) {
+                line = line.trim();
+                if (!line) return;
+                var eq = line.indexOf('=');
+                if (eq !== -1) {
+                    opts.push({ label: line.substring(0, eq).trim(), value: line.substring(eq + 1).trim() });
+                } else {
+                    opts.push({ label: line, value: line });
+                }
+            });
+            vscode.postMessage({ command: 'setFieldOptions', tableName, fieldName, options: opts });
+        }
+
         function generateAll() {
             vscode.postMessage({ command: 'generateAll' });
         }

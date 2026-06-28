@@ -38,6 +38,7 @@ class CodeGenerator {
 
     _detectUiType(field, tableName) {
         if (field.uiType) return field.uiType;
+        if (field.options && field.options.length > 0) return 'select';
         const raw = (field.rawType || field.type || '').toUpperCase();
         const name = field.name.toLowerCase();
         if (field.fk) return 'fk-select';
@@ -232,6 +233,10 @@ class CodeGenerator {
 
         const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n        ');
         const cellRenderers = fields.map(f => {
+            if (f.options && f.options.length > 0) {
+                const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
+                return `<td data-field="${f.name}">\${(${optMap})[item.${f.name}] || item.${f.name}}</td>`;
+            }
             return `<td data-field="${f.name}">\${item.${f.name}}</td>`;
         }).join('\n          ');
 
@@ -293,8 +298,35 @@ class CodeGenerator {
                         html += `      <select name="${f.name}" id="${tableName.toLowerCase()}_${f.name}"${required}>\n`;
                         html += `        <option value="">Select ${f.fk.table}</option>\n`;
                         html += `      </select><br>\n`;
+                    } else if (uiType === 'select') {
+                        html += `      <select name="${f.name}"${required}>\n`;
+                        html += `        <option value="">Select ${label}</option>\n`;
+                        if (f.options) {
+                            for (const o of f.options) {
+                                html += `        <option value="${o.value}">${o.label}</option>\n`;
+                            }
+                        }
+                        html += `      </select><br>\n`;
+                    } else if (uiType === 'radio') {
+                        html += `      <div><label>${label}</label><br>\n`;
+                        if (f.options) {
+                            for (const o of f.options) {
+                                html += `        <label><input type="radio" name="${f.name}" value="${o.value}"> ${o.label}</label>\n`;
+                            }
+                        }
+                        html += `      </div>\n`;
                     } else if (uiType === 'checkbox') {
-                        html += `      <label><input type="checkbox" name="${f.name}" value="1"${required}> ${label}</label>\n`;
+                        if (f.options && f.options.length > 0) {
+                            html += `      <div><label>${label}</label><br>\n`;
+                            html += `        <input type="hidden" name="${f.name}" id="e${f.name}Val">\n`;
+                            for (const o of f.options) {
+                                html += `        <label><input type="checkbox" data-field="${f.name}" value="${o.value}" onchange="updateE${f.name}()"> ${o.label}</label><br>\n`;
+                            }
+                            html += `        <script>function updateE${f.name}(){var a=[];document.querySelectorAll('#${mid} [data-field="${f.name}"]:checked').forEach(function(c){a.push(c.value)});document.getElementById('e${f.name}Val').value=a.join(',')}<\/script>\n`;
+                            html += `      </div>\n`;
+                        } else {
+                            html += `      <label><input type="checkbox" name="${f.name}" value="1"${required}> ${label}</label>\n`;
+                        }
                     } else if (uiType === 'textarea') {
                         html += `      <textarea name="${f.name}" placeholder="${label}"${required}></textarea><br>\n`;
                     } else if (uiType === 'date') {
@@ -495,6 +527,13 @@ class CodeGenerator {
                     html += `      document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += `      var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                } else if (uiType === 'select') {
+                    html += `      var sel = document.querySelector(${q}); if (sel) { sel.value = row.${f.name} ?? ''; }\n`;
+                } else if (uiType === 'radio') {
+                    html += `      document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
+                } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
+                    html += `      document.querySelectorAll('#${mid} [data-field="${f.name}"]').forEach(function(c) { c.checked = (String(row.${f.name}).split(',').indexOf(c.value) !== -1); });\n`;
+                    html += `      updateE${f.name}();\n`;
                 } else if (uiType === 'checkbox') {
                     html += `      var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == 1 || row.${f.name} === true); }\n`;
                 } else {
@@ -508,7 +547,8 @@ class CodeGenerator {
             html += `  document.getElementById('${mf}').onsubmit = async function(e) {\n`;
             html += `    e.preventDefault();\n`;
             html += `    var d = Object.fromEntries(new FormData(e.target));\n`;
-            html += `    document.querySelectorAll('#${mf} input[type=checkbox]:not(:checked)').forEach(function(c) { d[c.name] = '0'; });\n`;
+            html += `    /* set unchecked binary checkboxes to '0' */\n`;
+            html += `    document.querySelectorAll('#${mf} input[type=checkbox]:not(:checked)').forEach(function(c) { if (!c.name.endsWith('[]')) { d[c.name] = '0'; } });\n`;
             html += `    try {\n`;
             html += `      await fetch(API + '/' + eid, { method: '${s.editMode.toUpperCase()}', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
             html += `      close${tableName}EditModal(); load${tableName}();\n`;
@@ -576,8 +616,36 @@ class CodeGenerator {
                     html += `  <select name="${f.name}" id="${tableName.toLowerCase()}_${f.name}"${required}>\n`;
                     html += `    <option value="">Select ${f.fk.table}</option>\n`;
                     html += `  </select><br>\n`;
+                } else if (uiType === 'select') {
+                    html += `  <select name="${f.name}"${required}>\n`;
+                    html += `    <option value="">Select ${label}</option>\n`;
+                    if (f.options) {
+                        for (const o of f.options) {
+                            html += `    <option value="${o.value}">${o.label}</option>\n`;
+                        }
+                    }
+                    html += `  </select><br>\n`;
+                } else if (uiType === 'radio') {
+                    html += `  <div><label>${label}</label><br>\n`;
+                    if (f.options) {
+                        for (let i = 0; i < f.options.length; i++) {
+                            const o = f.options[i];
+                            html += `    <label><input type="radio" name="${f.name}" value="${o.value}"${i === 0 ? ' checked' : ''}> ${o.label}</label>\n`;
+                        }
+                    }
+                    html += `  </div>\n`;
                 } else if (uiType === 'checkbox') {
-                    html += `  <label><input type="checkbox" name="${f.name}" value="1"> ${label}</label><br>\n`;
+                    if (f.options && f.options.length > 0) {
+                        html += `  <div><label>${label}</label><br>\n`;
+                        html += `    <input type="hidden" name="${f.name}" id="${f.name}Val">\n`;
+                        for (const o of f.options) {
+                            html += `    <label><input type="checkbox" data-field="${f.name}" value="${o.value}" onchange="update${f.name}()"> ${o.label}</label><br>\n`;
+                        }
+                        html += `    <script>function update${f.name}(){var a=[];document.querySelectorAll('[data-field="${f.name}"]:checked').forEach(function(c){a.push(c.value)});document.getElementById('${f.name}Val').value=a.join(',')}<\/script>\n`;
+                        html += `  </div>\n`;
+                    } else {
+                        html += `  <label><input type="checkbox" name="${f.name}" value="1"> ${label}</label><br>\n`;
+                    }
                 } else if (uiType === 'textarea') {
                     html += `  <textarea name="${f.name}" placeholder="${label}"${required}>${f.default || ''}</textarea><br>\n`;
                 } else if (uiType === 'date') {
@@ -645,7 +713,7 @@ class CodeGenerator {
         js += `document.getElementById('${fn}').onsubmit = async function(e) {\n`;
         js += `  e.preventDefault();\n`;
         js += `  var d = Object.fromEntries(new FormData(e.target));\n`;
-        js += `  e.target.querySelectorAll('input[type=checkbox]:not(:checked)').forEach(function(c) { d[c.name] = '0'; });\n`;
+        js += `  e.target.querySelectorAll('input[type=checkbox]:not(:checked)').forEach(function(c) { if (c.name) { d[c.name] = '0'; } });\n`;
         if (isModalEdit) {
             js += `  await fetch('${api}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
         } else {
@@ -672,6 +740,13 @@ class CodeGenerator {
                     js += `    document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     js += `    var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                } else if (uiType === 'select') {
+                    js += `    var sel = document.querySelector(${q}); if (sel) { sel.value = row.${f.name} ?? ''; }\n`;
+                } else if (uiType === 'radio') {
+                    js += `    document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
+                } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
+                    js += `    document.querySelectorAll('[data-field="${f.name}"]').forEach(function(c) { c.checked = (String(row.${f.name}).split(',').indexOf(c.value) !== -1); });\n`;
+                    js += `    var hv = document.getElementById('${f.name}Val'); if (hv) { hv.value = row.${f.name} ?? ''; }\n`;
                 } else if (uiType === 'checkbox') {
                     js += `    var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == 1 || row.${f.name} === true); }\n`;
                 } else {
@@ -700,7 +775,13 @@ class CodeGenerator {
         const showDelete = statField && s.showDeleteButton;
 
         const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n      ');
-        const cellRenderers = fields.map(f => `<td data-field="${f.name}">\${item.${f.name}}</td>`).join('\n        ');
+        const cellRenderers = fields.map(f => {
+            if (f.options && f.options.length > 0) {
+                const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
+                return `<td data-field="${f.name}">\${(${optMap})[item.${f.name}] || item.${f.name}}</td>`;
+            }
+            return `<td data-field="${f.name}">\${item.${f.name}}</td>`;
+        }).join('\n        ');
 
         const lid = tableName.toLowerCase() + 'List';
         const pid = 'pagination' + tableName;
