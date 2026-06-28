@@ -287,11 +287,13 @@ class SchemaRegistry {
         if (!validTypes.includes(screen.type)) {
             throw new Error(`Invalid screen type "${screen.type}". Must be one of: ${validTypes.join(', ')}`);
         }
+        if (!this.schema.screens) this.schema.screens = [];
         this.schema.screens.push(JSON.parse(JSON.stringify(screen)));
         await this.save();
     }
 
     async removeScreen(name) {
+        if (!this.schema.screens) return;
         const index = this.schema.screens.findIndex(s => s.name === name);
         if (index === -1) {
             throw new Error(`Screen "${name}" not found`);
@@ -305,12 +307,13 @@ class SchemaRegistry {
         if (!screen) {
             throw new Error(`Screen "${name}" not found`);
         }
-        const idx = this.schema.screens.findIndex(s => s.name === name);
-        this.schema.screens[idx] = { ...screen, ...JSON.parse(JSON.stringify(updates)) };
         if (updates.name && updates.name !== name) {
             const dup = this.getScreen(updates.name);
             if (dup) throw new Error(`Screen "${updates.name}" already exists`);
         }
+        if (!this.schema.screens) this.schema.screens = [];
+        const idx = this.schema.screens.findIndex(s => s.name === name);
+        this.schema.screens[idx] = { ...screen, ...JSON.parse(JSON.stringify(updates)) };
         await this.save();
     }
 
