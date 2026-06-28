@@ -36,7 +36,8 @@ class ScreenGenerator {
         return JSON.stringify(screen, null, 2)
             .replace(/\\/g, '\\\\')
             .replace(/`/g, '\\`')
-            .replace(/\$/g, '\\$');
+            .replace(/\$/g, '\\$')
+            .replace(/<\//g, '<\\/');
     }
 
     _findTableForField(fieldName) {
@@ -262,7 +263,7 @@ class ScreenGenerator {
         h += '      }\n';
         h += '      if (source.startsWith(\'fixed:\')) {\n';
         h += '        var val = source.substring(6);\n';
-        h += '        try { return eval(val); } catch(e) { return val; }\n';
+        h += '        return val;\n';
         h += '      }\n';
         h += '      return source;\n';
         h += '    }\n\n';
@@ -328,6 +329,9 @@ class ScreenGenerator {
     generateReportPage(screen) {
         const pageConfig = this._buildPageConfigJs(screen);
         const title = this._escapeHtml(screen.title || screen.name);
+        const authSection = screen.auth !== false
+            ? '  <script src="auth.js"><\/script>\n  <script>redirectIfNotAuthenticated();<\/script>\n'
+            : '';
 
         let h = '';
         h += '<!DOCTYPE html>\n';
@@ -336,8 +340,7 @@ class ScreenGenerator {
         h += '  <meta charset="UTF-8">\n';
         h += '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n';
         h += '  <title>' + title + '</title>\n';
-        h += '  <script src="auth.js"><\/script>\n';
-        h += '  <script>redirectIfNotAuthenticated();<\/script>\n';
+        h += authSection;
         h += '  <style>\n';
         h += '    * { margin: 0; padding: 0; box-sizing: border-box; }\n';
         h += '    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; padding: 20px; }\n';

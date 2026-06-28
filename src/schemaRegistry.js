@@ -313,8 +313,20 @@ class SchemaRegistry {
         }
         if (!this.schema.screens) this.schema.screens = [];
         const idx = this.schema.screens.findIndex(s => s.name === name);
-        this.schema.screens[idx] = { ...screen, ...JSON.parse(JSON.stringify(updates)) };
+        this.schema.screens[idx] = this._deepMerge(screen, updates);
         await this.save();
+    }
+
+    _deepMerge(target, source) {
+        const result = JSON.parse(JSON.stringify(target));
+        for (const key of Object.keys(source)) {
+            if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+                result[key] = this._deepMerge(result[key] || {}, source[key]);
+            } else {
+                result[key] = JSON.parse(JSON.stringify(source[key]));
+            }
+        }
+        return result;
     }
 
     /**

@@ -76,6 +76,10 @@
       {
         "command": "node-sqlite-ai.generateAll",
         "title": "njs: Generate All Tables"
+      },
+      {
+        "command": "node-sqlite-ai.tailwindSetup",
+        "title": "njs: Setup TailwindCSS"
       }
     ],
     "keybindings": [

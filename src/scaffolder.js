@@ -103,12 +103,13 @@ class Scaffer {
         const screens = this.schemaRegistry.getScreens();
         if (screens && screens.length > 0) {
             let serverCode = files['server.js'] || '';
+            const screenRoutes = [];
             for (const screen of screens) {
                 if (screen.type === 'transaction') {
                     files[`public/${screen.name}.html`] = this.screenGen.generateTransactionPage(screen);
                     const dataRoute = this.screenGen.generateTransactionDataRoute(screen);
                     if (dataRoute) {
-                        serverCode = serverCode.replace('// Error handling middleware', dataRoute + '\n\n// Error handling middleware');
+                        screenRoutes.push(dataRoute);
                     }
                     const actionRoutes = this.schemaRegistry.getActionRoutes();
                     const actionRoute = screen.input && actionRoutes.find(r => r.name === screen.input.actionRoute);
@@ -118,15 +119,18 @@ class Scaffer {
                             `app.${actionRoute.method || 'POST'}('/api/${actionRoute.name}'`,
                             `app.post('/api/${screen.name}/submit'`
                         );
-                        serverCode = serverCode.replace('// Error handling middleware', submitRoute + '\n\n// Error handling middleware');
+                        screenRoutes.push(submitRoute);
                     }
                 } else if (screen.type === 'report') {
                     files[`public/${screen.name}.html`] = this.screenGen.generateReportPage(screen);
                     if (screen.query) {
                         const query = this.schemaRegistry.getQuery(screen.query);
                         if (query) {
-                            const reportRoute = this.codeGen.generateReportServer(screen.name, query.columns, null, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
-                            serverCode = serverCode.replace('// Error handling middleware', reportRoute + '\n\n// Error handling middleware');
+                            let reportRoute = this.codeGen.generateReportServer(screen.name, query.columns, null, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
+                            if (screen.auth === false) {
+                                reportRoute = reportRoute.replace(', authenticate', '');
+                            }
+                            screenRoutes.push(reportRoute);
                         }
                     }
                 } else if (screen.type === 'widget') {
@@ -135,6 +139,9 @@ class Scaffer {
                         files['public/dashboard.html'] = files['public/dashboard.html'].replace('</div>\n</body>', widgetHtml + '\n</div>\n</body>');
                     }
                 }
+            }
+            if (screenRoutes.length > 0 && serverCode.includes('// Error handling middleware')) {
+                serverCode = serverCode.replace('// Error handling middleware', screenRoutes.join('\n\n') + '\n\n// Error handling middleware');
             }
             files['server.js'] = serverCode;
         }
