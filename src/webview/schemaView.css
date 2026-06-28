@@ -1048,3 +1048,20 @@
         .tables-container { flex-direction: column; }
         .table-card { width: 100%; }
     }
+
+    /* Screens Tab */
+    .screens-toolbar { margin-bottom: 16px; }
+    .screen-card { background: #2d2d2d; border: 1px solid #3c3c3c; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .screen-card-header { display: flex; align-items: center; gap: 8px; }
+    .screen-card-type { display: inline-block; padding: 2px 8px; border-radius: 3px; color: #fff; font-size: 0.8em; text-transform: uppercase; font-weight: 600; }
+    .screen-card-actions { display: flex; gap: 4px; }
+    .screen-form { }
+    .screen-form-section { margin-bottom: 16px; padding: 12px; background: #252526; border-radius: 6px; }
+    .screen-form-section h4 { margin-bottom: 8px; color: #0078d4; font-size: 0.9em; text-transform: uppercase; }
+    .screen-form-section label { display: block; margin-bottom: 6px; color: #d4d4d4; font-size: 0.9em; }
+    .screen-form-section input[type="text"], .screen-form-section input[type="number"], .screen-form-section select { background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; padding: 4px 8px; border-radius: 3px; margin-left: 4px; }
+    .screen-form-section input[type="checkbox"] { margin-right: 4px; }
+    .screen-form-field-row, .screen-form-hf-row, .screen-form-col-row, .screen-form-cc-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 4px; background: #333; border-radius: 4px; flex-wrap: wrap; }
+    .screen-form-field-row select, .screen-form-hf-row select, .screen-form-col-row select, .screen-form-cc-row select { background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; padding: 2px 4px; border-radius: 3px; }
+    .screen-form-field-row input, .screen-form-hf-row input, .screen-form-col-row input, .screen-form-cc-row input { background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; padding: 2px 4px; border-radius: 3px; width: 120px; }
+    .se-field-dot { color: #888; font-weight: bold; }

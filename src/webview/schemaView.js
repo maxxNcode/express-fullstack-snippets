@@ -675,6 +675,16 @@
                 if (arTa) arTa.value = msg.code || '// No route to preview';
             } else if (msg.command === 'tableSettingsReceived') {
                 populateTableSettings(msg.settings, msg.fields || []);
+            } else if (msg.command === 'screensLoaded') {
+                screensState.screens = msg.screens;
+                screensState.tables = msg.tables;
+                screensState.queryNames = msg.queryNames;
+                screensState.actionRoutes = msg.actionRoutes;
+                renderScreensList();
+            } else if (msg.command === 'screenError') {
+                alert('Error: ' + msg.error);
+            } else if (msg.command === 'screenPreviewResult') {
+                showScreenPreview(msg.screenName, msg.html);
             }
         });
 
@@ -814,6 +824,14 @@
         }
         // --- end DB Runner ---
 
+        // --- Screens ---
+        var screensState = {
+            screens: [],
+            tables: {},
+            queryNames: [],
+            actionRoutes: []
+        };
+
         // --- Tab Navigation ---
         function switchTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(function(el) {
@@ -832,6 +850,9 @@
             var state = vscode.getState() || {};
             state.activeTab = tabName;
             vscode.setState(state);
+            if (tabName === 'screens') {
+                vscode.postMessage({ command: 'getScreens' });
+            }
         }
 
         // Restore active tab on page load
@@ -1579,6 +1600,491 @@
         function generateActionRoute() {
             var route = buildActionRoute();
             vscode.postMessage({ command: 'generateActionRoute', route: route });
+        }
+
+        // --- Screens UI ---
+
+        function renderScreensList() {
+            var container = document.getElementById('screensList');
+            if (!container) return;
+            var html = '';
+            if (screensState.screens.length === 0) {
+                html = '<div style="text-align:center;padding:40px;color:#888;">No screens defined. Click "+ New Screen" to create one.</div>';
+            } else {
+                for (var i = 0; i < screensState.screens.length; i++) {
+                    var s = screensState.screens[i];
+                    var typeColor = { transaction: '#0078d4', report: '#0d7a3e', widget: '#6a5a00' };
+                    var color = typeColor[s.type] || '#888';
+                    html += '<div class="screen-card" data-name="' + s.name + '">';
+                    html += '  <div class="screen-card-header">';
+                    html += '    <span class="screen-card-type" style="background:' + color + '">' + s.type + '</span>';
+                    html += '    <strong>' + (s.title || s.name) + '</strong>';
+                    html += '    <span style="color:#888;font-size:0.85em;margin-left:8px;">' + s.name + '</span>';
+                    html += '  </div>';
+                    html += '  <div class="screen-card-actions">';
+                    html += '    <button class="btn btn-sm btn-info" onclick="editScreen(\'' + s.name + '\')">Edit</button>';
+                    html += '    <button class="btn btn-sm btn-success" onclick="previewScreen(\'' + s.name + '\')">Preview</button>';
+                    html += '    <button class="btn btn-sm btn-danger" onclick="removeScreen(\'' + s.name + '\', event)">Delete</button>';
+                    html += '  </div>';
+                    html += '</div>';
+                }
+            }
+            container.innerHTML = html;
+        }
+
+        function addScreen() {
+            openScreenEditor(null);
+        }
+
+        function editScreen(name) {
+            var screen = screensState.screens.find(function(s) { return s.name === name; });
+            if (screen) openScreenEditor(screen);
+        }
+
+        function openScreenEditor(screen) {
+            var isNew = !screen;
+            var s = screen || { name: '', title: '', type: 'transaction', auth: true, display: { layout: 'plain', fields: [] }, input: { selectionType: 'radio', hiddenFields: [], actionRoute: '' }, result: { type: 'message', successMessage: 'Success!', failureMessage: 'Error.' } };
+
+            var modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.id = 'screenEditorModal';
+            modal.innerHTML = '<div class="modal-content" style="max-width:700px;max-height:80vh;overflow-y:auto;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">' +
+                '<h2>' + (isNew ? 'New Screen' : 'Edit Screen: ' + screen.name) + '</h2>' +
+                '<button class="btn btn-sm btn-secondary" onclick="closeScreenEditor()">X</button>' +
+                '</div>' +
+                '<div id="screenEditorForm">' + renderScreenEditorForm(s, isNew) + '</div>' +
+                '<div style="margin-top:16px;text-align:right;">' +
+                '<button class="btn btn-secondary" onclick="closeScreenEditor()" style="margin-right:8px;">Cancel</button>' +
+                '<button class="btn btn-primary" onclick="saveScreenEditor(\'' + (screen ? screen.name : '') + '\')">' + (isNew ? 'Create' : 'Update') + '</button>' +
+                '</div>' +
+                '</div>';
+            document.body.appendChild(modal);
+        }
+
+        function closeScreenEditor() {
+            var modal = document.getElementById('screenEditorModal');
+            if (modal) modal.remove();
+        }
+
+        function renderScreenEditorForm(s, isNew) {
+            var typeOptions = ['transaction', 'report', 'widget'];
+            var typeHtml = '';
+            for (var i = 0; i < typeOptions.length; i++) {
+                var t = typeOptions[i];
+                typeHtml += '<option value="' + t + '"' + (s.type === t ? ' selected' : '') + '>' + t + '</option>';
+            }
+
+            var tableOptions = '<option value="">-- Select --</option>';
+            for (var tn in screensState.tables) {
+                tableOptions += '<option value="' + tn + '">' + tn + '</option>';
+            }
+
+            var queryOptions = '<option value="">-- Select --</option>';
+            for (var q = 0; q < screensState.queryNames.length; q++) {
+                queryOptions += '<option value="' + screensState.queryNames[q] + '">' + screensState.queryNames[q] + '</option>';
+            }
+
+            var routeOptions = '<option value="">-- Select --</option>';
+            for (var a = 0; a < screensState.actionRoutes.length; a++) {
+                routeOptions += '<option value="' + screensState.actionRoutes[a].name + '">' + screensState.actionRoutes[a].name + '</option>';
+            }
+
+            var layoutOptions = '';
+            var showGroupField = false;
+            if (s.type === 'transaction') {
+                layoutOptions = '<option value="plain"' + (s.display.layout === 'plain' ? ' selected' : '') + '>Plain</option><option value="grouped"' + (s.display.layout === 'grouped' ? ' selected' : '') + '>Grouped</option>';
+                showGroupField = s.display.layout === 'grouped';
+            } else if (s.type === 'report') {
+                layoutOptions = '<option value="table"' + (s.display.layout === 'table' ? ' selected' : '') + '>Table</option><option value="grouped-table"' + (s.display.layout === 'grouped-table' ? ' selected' : '') + '>Grouped Table</option><option value="cards"' + (s.display.layout === 'cards' ? ' selected' : '') + '>Cards</option>';
+                showGroupField = s.display.layout === 'grouped-table';
+            }
+
+            var formHtml = '<div class="screen-form">' +
+                '<div class="screen-form-section">' +
+                '<label>Name: <input id="se_name" value="' + (s.name || '') + '" placeholder="e.g., castVote"' + (!isNew ? ' disabled' : '') + ' style="width:200px;"></label>' +
+                '<label>Title: <input id="se_title" value="' + (s.title || '') + '" placeholder="e.g., Cast Your Vote" style="width:300px;"></label>' +
+                '<label>Type: <select id="se_type" onchange="onScreenTypeChange()">' + typeHtml + '</select></label>' +
+                '<label><input type="checkbox" id="se_auth"' + (s.auth !== false ? ' checked' : '') + '> Require authentication</label>' +
+                '</div>';
+
+            if (s.type === 'transaction') {
+                var fieldsHtml = '';
+                if (s.display.fields) {
+                    for (var fi = 0; fi < s.display.fields.length; fi++) {
+                        var f = s.display.fields[fi];
+                        fieldsHtml += '<div class="screen-form-field-row">' +
+                            '<select class="se-field-table">' + makeSelected(tableOptions, f.table || '') + '</select>' +
+                            '<span class="se-field-dot">.</span>' +
+                            '<input class="se-field-name" value="' + (f.field || '') + '" placeholder="field">' +
+                            '<label><input type="checkbox" class="se-field-show"' + (f.show !== false ? ' checked' : '') + '> Show</label>' +
+                            '<label><input type="checkbox" class="se-field-selectable"' + (f.displayAs === 'selectable' ? ' checked' : '') + '> Selectable</label>' +
+                            '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>' +
+                            '</div>';
+                    }
+                }
+
+                var hfHtml = '';
+                if (s.input.hiddenFields) {
+                    for (var hi = 0; hi < s.input.hiddenFields.length; hi++) {
+                        var hf = s.input.hiddenFields[hi];
+                        hfHtml += '<div class="screen-form-hf-row">' +
+                            '<input class="se-hf-name" value="' + (hf.name || '') + '" placeholder="Field name">' +
+                            '<select class="se-hf-source">' +
+                            '<option value="jwt.id"' + (hf.source === 'jwt.id' ? ' selected' : '') + '>JWT ID</option>' +
+                            '<option value="jwt.field"' + (hf.source === 'jwt.field' ? ' selected' : '') + '>JWT Field</option>' +
+                            '<option value="url.param"' + (hf.source === 'url.param' ? ' selected' : '') + '>URL Param</option>' +
+                            '<option value="fixed:"' + (hf.source && hf.source.startsWith('fixed:') ? ' selected' : '') + '>Fixed Value</option>' +
+                            '</select>' +
+                            '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>' +
+                            '</div>';
+                    }
+                }
+
+                formHtml += '<div class="screen-form-section">' +
+                    '<h4>Display</h4>' +
+                    '<label>Layout: <select id="se_layout" onchange="onScreenLayoutChange()">' + layoutOptions + '</select></label>' +
+                    '<div id="se_groupFieldRow"' + (showGroupField ? '' : ' style="display:none"') + '>' +
+                    '<label>Group Field: <select id="se_groupField">' + tableOptions + '</select></label>' +
+                    '<label>Group Header: <select id="se_groupHeader">' + tableOptions + '</select></label>' +
+                    '</div>' +
+                    '<h4>Display Fields</h4>' +
+                    '<div id="se_displayFields">' + fieldsHtml + '</div>' +
+                    '<button class="btn btn-sm btn-secondary" onclick="addDisplayField()">+ Add Field</button>' +
+                    '</div>' +
+                    '<div class="screen-form-section">' +
+                    '<h4>Input</h4>' +
+                    '<label>Selection: <select id="se_selectionType"><option value="radio"' + (s.input.selectionType === 'radio' ? ' selected' : '') + '>Radio (single)</option><option value="checkbox"' + (s.input.selectionType === 'checkbox' ? ' selected' : '') + '>Checkbox (multi)</option></select></label>' +
+                    '<label>Action Route: <select id="se_actionRoute">' + routeOptions + '</select></label>' +
+                    '<label><input type="checkbox" id="se_batch"' + (s.input.batch ? ' checked' : '') + '> Batch submit</label>' +
+                    '<h4>Hidden Fields</h4>' +
+                    '<div id="se_hiddenFields">' + hfHtml + '</div>' +
+                    '<button class="btn btn-sm btn-secondary" onclick="addHiddenField()">+ Add Hidden Field</button>' +
+                    '</div>' +
+                    '<div class="screen-form-section">' +
+                    '<h4>Result</h4>' +
+                    '<label>Type: <select id="se_resultType"><option value="message"' + (s.result.type === 'message' ? ' selected' : '') + '>Message</option><option value="summary"' + (s.result.type === 'summary' ? ' selected' : '') + '>Summary</option><option value="redirect"' + (s.result.type === 'redirect' ? ' selected' : '') + '>Redirect</option></select></label>' +
+                    '<input id="se_successMessage" value="' + (s.result.successMessage || '') + '" placeholder="Success message" style="width:100%;margin-top:4px;">' +
+                    '<input id="se_failureMessage" value="' + (s.result.failureMessage || '') + '" placeholder="Error message" style="width:100%;margin-top:4px;">' +
+                    '<input id="se_redirectUrl" value="' + (s.result.redirectUrl || '') + '" placeholder="Redirect URL" style="width:100%;margin-top:4px;">' +
+                    '</div>';
+            }
+
+            if (s.type === 'report') {
+                var colsHtml = '';
+                if (s.display.columns) {
+                    for (var ci = 0; ci < s.display.columns.length; ci++) {
+                        var col = s.display.columns[ci];
+                        colsHtml += '<div class="screen-form-col-row">' +
+                            '<input class="se-col-field" value="' + (col.field || '') + '" placeholder="Field name">' +
+                            '<input class="se-col-label" value="' + (col.label || '') + '" placeholder="Label">' +
+                            '<select class="se-col-format">' +
+                            '<option value="text"' + ((col.format || 'text') === 'text' ? ' selected' : '') + '>Text</option>' +
+                            '<option value="number"' + (col.format === 'number' ? ' selected' : '') + '>Number</option>' +
+                            '<option value="currency"' + (col.format === 'currency' ? ' selected' : '') + '>Currency</option>' +
+                            '<option value="percentage-bar"' + (col.format === 'percentage-bar' ? ' selected' : '') + '>% Bar</option>' +
+                            '<option value="boolean"' + (col.format === 'boolean' ? ' selected' : '') + '>Boolean</option>' +
+                            '</select>' +
+                            '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>' +
+                            '</div>';
+                    }
+                }
+
+                var ccHtml = '';
+                if (s.display.computedColumns) {
+                    var ccKeys = Object.keys(s.display.computedColumns);
+                    for (var cki = 0; cki < ccKeys.length; cki++) {
+                        var ccName = ccKeys[cki];
+                        var cc = s.display.computedColumns[ccName];
+                        ccHtml += '<div class="screen-form-cc-row">' +
+                            '<input class="se-cc-name" value="' + ccName + '" placeholder="Name">' +
+                            '<select class="se-cc-type">' +
+                            '<option value="percentage"' + (cc.type === 'percentage' ? ' selected' : '') + '>Percentage</option>' +
+                            '<option value="rank"' + (cc.type === 'rank' ? ' selected' : '') + '>Rank</option>' +
+                            '<option value="runningTotal"' + (cc.type === 'runningTotal' ? ' selected' : '') + '>Running Total</option>' +
+                            '</select>' +
+                            '<input class="se-cc-sourceField" value="' + (cc.sourceField || '') + '" placeholder="Source field">' +
+                            '<input class="se-cc-sortField" value="' + (cc.sortField || '') + '" placeholder="Sort field">' +
+                            '<select class="se-cc-direction"><option value="desc"' + ((cc.direction || 'desc') === 'desc' ? ' selected' : '') + '>Desc</option><option value="asc"' + (cc.direction === 'asc' ? ' selected' : '') + '>Asc</option></select>' +
+                            '<label><input type="checkbox" class="se-cc-perGroup"' + (cc.perGroup !== false ? ' checked' : '') + '> Per group</label>' +
+                            '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>' +
+                            '</div>';
+                    }
+                }
+
+                var ct = s.display.cardTemplate || {};
+                formHtml += '<div class="screen-form-section">' +
+                    '<label>Query: <select id="se_query">' + queryOptions + '</select></label>' +
+                    '<label>Layout: <select id="se_layout" onchange="onScreenLayoutChange()">' + layoutOptions + '</select></label>' +
+                    '<div id="se_reportGroupFieldRow"' + (showGroupField ? '' : ' style="display:none"') + '>' +
+                    '<label>Group Field: <input id="se_reportGroupField" value="' + (s.display.groupField || '') + '" placeholder="Field name"></label>' +
+                    '</div>' +
+                    '<h4>Columns</h4>' +
+                    '<div id="se_reportColumns">' + colsHtml + '</div>' +
+                    '<button class="btn btn-sm btn-secondary" onclick="addReportColumn()">+ Add Column</button>' +
+                    '<h4>Computed Columns</h4>' +
+                    '<div id="se_computedColumns">' + ccHtml + '</div>' +
+                    '<button class="btn btn-sm btn-secondary" onclick="addComputedColumn()">+ Add Computed Column</button>' +
+                    '<h4>Card Template</h4>' +
+                    '<input id="se_cardTitle" value="' + (ct.title || '') + '" placeholder="Title (e.g., {{ firstName }})" style="width:100%;">' +
+                    '<input id="se_cardSubtitle" value="' + (ct.subtitle || '') + '" placeholder="Subtitle" style="width:100%;margin-top:4px;">' +
+                    '<div style="display:flex;gap:8px;margin-top:4px;"><input id="se_cardStatField" value="' + ((ct.stat && ct.stat.field) || '') + '" placeholder="Stat field" style="flex:1;"><input id="se_cardStatLabel" value="' + ((ct.stat && ct.stat.label) || '') + '" placeholder="Stat label" style="flex:1;"></div>' +
+                    '<div style="display:flex;gap:8px;margin-top:4px;"><input id="se_cardHighlightField" value="' + ((ct.highlight && ct.highlight.field) || '') + '" placeholder="Highlight field" style="flex:1;"><input id="se_cardHighlightValue" value="' + ((ct.highlight && ct.highlight.value) || '') + '" placeholder="Highlight value" style="flex:1;"></div>' +
+                    '</div>';
+            }
+
+            if (s.type === 'widget') {
+                formHtml += '<div class="screen-form-section">' +
+                    '<label>SQL Query:</label>' +
+                    '<textarea id="se_widgetQuery" rows="3" style="width:100%;font-family:monospace;">' + (s.query || '') + '</textarea>' +
+                    '<label>Icon: <input id="se_widgetIcon" value="' + (s.icon || '') + '" placeholder="emoji or text"></label>' +
+                    '<label>Label: <input id="se_widgetLabel" value="' + (s.label || '') + '" placeholder="Widget label" style="width:100%;"></label>' +
+                    '<label>Link URL: <input id="se_widgetLink" value="' + (s.link || '') + '" placeholder="/page.html" style="width:100%;"></label>' +
+                    '<label>Color: <input id="se_widgetColor" value="' + (s.color || '#0078d4') + '" placeholder="#0078d4" style="width:100%;"></label>' +
+                    '</div>';
+            }
+
+            formHtml += '</div>';
+            return formHtml;
+        }
+
+        function makeSelected(optionsHtml, value) {
+            return optionsHtml.replace('value="' + value + '"', 'value="' + value + '" selected');
+        }
+
+        function onScreenTypeChange() {
+            var type = document.getElementById('se_type').value;
+            var screen = collectScreenEditorFormData();
+            screen.type = type;
+            var formContainer = document.getElementById('screenEditorForm');
+            if (formContainer) {
+                formContainer.innerHTML = renderScreenEditorForm(screen, false);
+            }
+        }
+
+        function onScreenLayoutChange() {
+            var layout = document.getElementById('se_layout').value;
+            var groupRow = document.getElementById('se_groupFieldRow');
+            if (groupRow) groupRow.style.display = (layout === 'grouped' || layout === 'grouped-table') ? '' : 'none';
+            var reportGroupRow = document.getElementById('se_reportGroupFieldRow');
+            if (reportGroupRow) reportGroupRow.style.display = layout === 'grouped-table' ? '' : 'none';
+        }
+
+        function addDisplayField() {
+            var container = document.getElementById('se_displayFields');
+            if (!container) return;
+            var tableOptions = '<option value="">-- Table --</option>';
+            for (var tn in screensState.tables) {
+                tableOptions += '<option value="' + tn + '">' + tn + '</option>';
+            }
+            var div = document.createElement('div');
+            div.className = 'screen-form-field-row';
+            div.innerHTML = '<select class="se-field-table">' + tableOptions + '</select>' +
+                '<span class="se-field-dot">.</span>' +
+                '<input class="se-field-name" placeholder="field">' +
+                '<label><input type="checkbox" class="se-field-show" checked> Show</label>' +
+                '<label><input type="checkbox" class="se-field-selectable"> Selectable</label>' +
+                '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>';
+            container.appendChild(div);
+        }
+
+        function addHiddenField() {
+            var container = document.getElementById('se_hiddenFields');
+            if (!container) return;
+            var div = document.createElement('div');
+            div.className = 'screen-form-hf-row';
+            div.innerHTML = '<input class="se-hf-name" placeholder="Field name">' +
+                '<select class="se-hf-source"><option value="jwt.id">JWT ID</option><option value="jwt.field">JWT Field</option><option value="url.param">URL Param</option><option value="fixed:">Fixed Value</option></select>' +
+                '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>';
+            container.appendChild(div);
+        }
+
+        function addReportColumn() {
+            var container = document.getElementById('se_reportColumns');
+            if (!container) return;
+            var div = document.createElement('div');
+            div.className = 'screen-form-col-row';
+            div.innerHTML = '<input class="se-col-field" placeholder="Field name">' +
+                '<input class="se-col-label" placeholder="Label">' +
+                '<select class="se-col-format"><option value="text">Text</option><option value="number">Number</option><option value="currency">Currency</option><option value="percentage-bar">% Bar</option><option value="boolean">Boolean</option></select>' +
+                '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>';
+            container.appendChild(div);
+        }
+
+        function addComputedColumn() {
+            var container = document.getElementById('se_computedColumns');
+            if (!container) return;
+            var div = document.createElement('div');
+            div.className = 'screen-form-cc-row';
+            div.innerHTML = '<input class="se-cc-name" placeholder="Name (e.g., __pct__)">' +
+                '<select class="se-cc-type"><option value="percentage">Percentage</option><option value="rank">Rank</option><option value="runningTotal">Running Total</option></select>' +
+                '<input class="se-cc-sourceField" placeholder="Source field">' +
+                '<input class="se-cc-sortField" placeholder="Sort field">' +
+                '<select class="se-cc-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select>' +
+                '<label><input type="checkbox" class="se-cc-perGroup" checked> Per group</label>' +
+                '<button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">X</button>';
+            container.appendChild(div);
+        }
+
+        function collectScreenEditorFormData() {
+            var name = document.getElementById('se_name') ? document.getElementById('se_name').value.trim() : '';
+            var title = document.getElementById('se_title') ? document.getElementById('se_title').value.trim() : '';
+            var type = document.getElementById('se_type') ? document.getElementById('se_type').value : 'transaction';
+            var auth = document.getElementById('se_auth') ? document.getElementById('se_auth').checked : true;
+
+            var screen = { name: name || title.toLowerCase().replace(/\s+/g, ''), title: title || name, type: type, auth: auth };
+
+            if (type === 'transaction') {
+                var layout = document.getElementById('se_layout') ? document.getElementById('se_layout').value : 'plain';
+                screen.display = { layout: layout, fields: [] };
+
+                if (layout === 'grouped') {
+                    screen.display.groupField = document.getElementById('se_groupField') ? document.getElementById('se_groupField').value : '';
+                    screen.display.groupHeader = document.getElementById('se_groupHeader') ? document.getElementById('se_groupHeader').value : '';
+                }
+
+                var fieldRows = document.querySelectorAll('#se_displayFields .screen-form-field-row');
+                for (var i = 0; i < fieldRows.length; i++) {
+                    var row = fieldRows[i];
+                    var table = row.querySelector('.se-field-table') ? row.querySelector('.se-field-table').value : '';
+                    var field = row.querySelector('.se-field-name') ? row.querySelector('.se-field-name').value.trim() : '';
+                    var show = row.querySelector('.se-field-show') ? row.querySelector('.se-field-show').checked : true;
+                    var selectable = row.querySelector('.se-field-selectable') ? row.querySelector('.se-field-selectable').checked : false;
+                    if (table && field) {
+                        var f = { table: table, field: field, show: show };
+                        if (selectable) f.displayAs = 'selectable';
+                        screen.display.fields.push(f);
+                    }
+                }
+
+                screen.input = {
+                    selectionType: document.getElementById('se_selectionType') ? document.getElementById('se_selectionType').value : 'radio',
+                    hiddenFields: [],
+                    actionRoute: document.getElementById('se_actionRoute') ? document.getElementById('se_actionRoute').value : '',
+                    batch: document.getElementById('se_batch') ? document.getElementById('se_batch').checked : false
+                };
+
+                var hfRows = document.querySelectorAll('#se_hiddenFields .screen-form-hf-row');
+                for (var j = 0; j < hfRows.length; j++) {
+                    var hfName = hfRows[j].querySelector('.se-hf-name') ? hfRows[j].querySelector('.se-hf-name').value.trim() : '';
+                    var hfSource = hfRows[j].querySelector('.se-hf-source') ? hfRows[j].querySelector('.se-hf-source').value : '';
+                    if (hfName) {
+                        screen.input.hiddenFields.push({ name: hfName, source: hfSource });
+                    }
+                }
+
+                screen.result = {
+                    type: document.getElementById('se_resultType') ? document.getElementById('se_resultType').value : 'message',
+                    successMessage: document.getElementById('se_successMessage') ? document.getElementById('se_successMessage').value : '',
+                    failureMessage: document.getElementById('se_failureMessage') ? document.getElementById('se_failureMessage').value : '',
+                    redirectUrl: document.getElementById('se_redirectUrl') ? document.getElementById('se_redirectUrl').value : ''
+                };
+            } else if (type === 'report') {
+                screen.query = document.getElementById('se_query') ? document.getElementById('se_query').value : '';
+                var layout2 = document.getElementById('se_layout') ? document.getElementById('se_layout').value : 'table';
+                screen.display = { layout: layout2, columns: [], computedColumns: {} };
+                if (layout2 === 'grouped-table') {
+                    screen.display.groupField = document.getElementById('se_reportGroupField') ? document.getElementById('se_reportGroupField').value : '';
+                }
+
+                var colRows = document.querySelectorAll('#se_reportColumns .screen-form-col-row');
+                screen.display.columns = [];
+                for (var k = 0; k < colRows.length; k++) {
+                    var colField = colRows[k].querySelector('.se-col-field') ? colRows[k].querySelector('.se-col-field').value.trim() : '';
+                    var colLabel = colRows[k].querySelector('.se-col-label') ? colRows[k].querySelector('.se-col-label').value.trim() : '';
+                    var colFormat = colRows[k].querySelector('.se-col-format') ? colRows[k].querySelector('.se-col-format').value : 'text';
+                    if (colField) {
+                        screen.display.columns.push({ field: colField, label: colLabel || colField, format: colFormat });
+                    }
+                }
+
+                var ccRows = document.querySelectorAll('#se_computedColumns .screen-form-cc-row');
+                for (var m = 0; m < ccRows.length; m++) {
+                    var ccName = ccRows[m].querySelector('.se-cc-name') ? ccRows[m].querySelector('.se-cc-name').value.trim() : '';
+                    var ccType = ccRows[m].querySelector('.se-cc-type') ? ccRows[m].querySelector('.se-cc-type').value : '';
+                    var ccSourceField = ccRows[m].querySelector('.se-cc-sourceField') ? ccRows[m].querySelector('.se-cc-sourceField').value.trim() : '';
+                    var ccSortField = ccRows[m].querySelector('.se-cc-sortField') ? ccRows[m].querySelector('.se-cc-sortField').value.trim() : '';
+                    var ccDirection = ccRows[m].querySelector('.se-cc-direction') ? ccRows[m].querySelector('.se-cc-direction').value : 'desc';
+                    var ccPerGroup = ccRows[m].querySelector('.se-cc-perGroup') ? ccRows[m].querySelector('.se-cc-perGroup').checked : true;
+                    if (ccName) {
+                        screen.display.computedColumns[ccName] = { type: ccType };
+                        if (ccType === 'percentage') screen.display.computedColumns[ccName].sourceField = ccSourceField;
+                        if (ccType === 'rank') {
+                            screen.display.computedColumns[ccName].sortField = ccSortField || ccSourceField;
+                            screen.display.computedColumns[ccName].direction = ccDirection;
+                            screen.display.computedColumns[ccName].perGroup = ccPerGroup;
+                        }
+                        if (ccType === 'runningTotal') {
+                            screen.display.computedColumns[ccName].sourceField = ccSourceField;
+                            screen.display.computedColumns[ccName].sortField = ccSortField;
+                        }
+                    }
+                }
+
+                screen.display.cardTemplate = {
+                    title: document.getElementById('se_cardTitle') ? document.getElementById('se_cardTitle').value : '',
+                    subtitle: document.getElementById('se_cardSubtitle') ? document.getElementById('se_cardSubtitle').value : '',
+                    stat: {
+                        field: document.getElementById('se_cardStatField') ? document.getElementById('se_cardStatField').value : '',
+                        label: document.getElementById('se_cardStatLabel') ? document.getElementById('se_cardStatLabel').value : ''
+                    },
+                    highlight: {
+                        field: document.getElementById('se_cardHighlightField') ? document.getElementById('se_cardHighlightField').value : '',
+                        value: document.getElementById('se_cardHighlightValue') ? document.getElementById('se_cardHighlightValue').value : ''
+                    }
+                };
+            } else if (type === 'widget') {
+                screen.query = document.getElementById('se_widgetQuery') ? document.getElementById('se_widgetQuery').value : '';
+                screen.icon = document.getElementById('se_widgetIcon') ? document.getElementById('se_widgetIcon').value : '';
+                screen.label = document.getElementById('se_widgetLabel') ? document.getElementById('se_widgetLabel').value : '';
+                screen.link = document.getElementById('se_widgetLink') ? document.getElementById('se_widgetLink').value : '';
+                screen.color = document.getElementById('se_widgetColor') ? document.getElementById('se_widgetColor').value : '#0078d4';
+            }
+
+            return screen;
+        }
+
+        function saveScreenEditor(originalName) {
+            var screen = collectScreenEditorFormData();
+            if (!screen.name) {
+                alert('Screen name is required');
+                return;
+            }
+            if (screen.display && screen.display.fields && screen.display.fields.length === 0 && screen.type === 'transaction') {
+                alert('At least one display field is required');
+                return;
+            }
+
+            if (originalName) {
+                vscode.postMessage({ command: 'updateScreen', screenName: originalName, screen: screen });
+            } else {
+                vscode.postMessage({ command: 'addScreen', screen: screen });
+            }
+            closeScreenEditor();
+        }
+
+        function removeScreen(name, event) {
+            if (event) event.stopPropagation();
+            if (confirm('Delete screen "' + name + '"?')) {
+                vscode.postMessage({ command: 'removeScreen', screenName: name });
+            }
+        }
+
+        function previewScreen(name) {
+            vscode.postMessage({ command: 'previewScreen', screenName: name });
+        }
+
+        function showScreenPreview(name, html) {
+            var modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.innerHTML = '<div class="modal-content" style="max-width:90%;max-height:90vh;width:800px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+                '<h3>Preview: ' + name + '</h3>' +
+                '<button class="btn btn-sm btn-secondary" onclick="this.closest(\'.modal-overlay\').remove()">X</button>' +
+                '</div>' +
+                '<iframe style="width:100%;height:70vh;border:1px solid #ddd;border-radius:4px;" srcdoc="' + html.replace(/"/g, '&quot;').replace(/'/g, "\\'") + '"></iframe>' +
+                '</div>';
+            document.body.appendChild(modal);
         }
 
         // --- Table Settings ---
