@@ -111,7 +111,7 @@ class Scaffer {
                         serverCode = serverCode.replace('// Error handling middleware', dataRoute + '\n\n// Error handling middleware');
                     }
                     const actionRoutes = this.schemaRegistry.getActionRoutes();
-                    const actionRoute = actionRoutes.find(r => r.name === screen.input.actionRoute);
+                    const actionRoute = screen.input && actionRoutes.find(r => r.name === screen.input.actionRoute);
                     if (actionRoute) {
                         const actionCode = this._generateActionRouteCode(actionRoute);
                         const submitRoute = actionCode.replace(

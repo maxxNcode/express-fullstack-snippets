@@ -1982,7 +1982,8 @@
             } else if (type === 'report') {
                 screen.query = document.getElementById('se_query') ? document.getElementById('se_query').value : '';
                 var layout2 = document.getElementById('se_layout') ? document.getElementById('se_layout').value : 'table';
-                screen.display = { layout: layout2, columns: [], computedColumns: {} };
+                screen.display = { layout: layout2, columns: [] };
+                screen.computedColumns = {};
                 if (layout2 === 'grouped-table') {
                     screen.display.groupField = document.getElementById('se_reportGroupField') ? document.getElementById('se_reportGroupField').value : '';
                 }
@@ -2007,16 +2008,16 @@
                     var ccDirection = ccRows[m].querySelector('.se-cc-direction') ? ccRows[m].querySelector('.se-cc-direction').value : 'desc';
                     var ccPerGroup = ccRows[m].querySelector('.se-cc-perGroup') ? ccRows[m].querySelector('.se-cc-perGroup').checked : true;
                     if (ccName) {
-                        screen.display.computedColumns[ccName] = { type: ccType };
-                        if (ccType === 'percentage') screen.display.computedColumns[ccName].sourceField = ccSourceField;
+                        screen.computedColumns[ccName] = { type: ccType };
+                        if (ccType === 'percentage') screen.computedColumns[ccName].sourceField = ccSourceField;
                         if (ccType === 'rank') {
-                            screen.display.computedColumns[ccName].sortField = ccSortField || ccSourceField;
-                            screen.display.computedColumns[ccName].direction = ccDirection;
-                            screen.display.computedColumns[ccName].perGroup = ccPerGroup;
+                            screen.computedColumns[ccName].sortField = ccSortField || ccSourceField;
+                            screen.computedColumns[ccName].direction = ccDirection;
+                            screen.computedColumns[ccName].perGroup = ccPerGroup;
                         }
                         if (ccType === 'runningTotal') {
-                            screen.display.computedColumns[ccName].sourceField = ccSourceField;
-                            screen.display.computedColumns[ccName].sortField = ccSortField;
+                            screen.computedColumns[ccName].sourceField = ccSourceField;
+                            screen.computedColumns[ccName].sortField = ccSortField;
                         }
                     }
                 }
@@ -2027,11 +2028,11 @@
                     stat: {
                         field: document.getElementById('se_cardStatField') ? document.getElementById('se_cardStatField').value : '',
                         label: document.getElementById('se_cardStatLabel') ? document.getElementById('se_cardStatLabel').value : ''
-                    },
-                    highlight: {
-                        field: document.getElementById('se_cardHighlightField') ? document.getElementById('se_cardHighlightField').value : '',
-                        value: document.getElementById('se_cardHighlightValue') ? document.getElementById('se_cardHighlightValue').value : ''
                     }
+                };
+                screen.display.highlight = {
+                    field: document.getElementById('se_cardHighlightField') ? document.getElementById('se_cardHighlightField').value : '',
+                    value: document.getElementById('se_cardHighlightValue') ? document.getElementById('se_cardHighlightValue').value : ''
                 };
             } else if (type === 'widget') {
                 screen.query = document.getElementById('se_widgetQuery') ? document.getElementById('se_widgetQuery').value : '';
