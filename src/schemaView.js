@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const path = require('path');
 const { CodeGenerator } = require('./generator');
 const { runQuery, findDbFiles } = require('./dbRunner');
+const ScreenGenerator = require('./screenGenerator');
 
 class SchemaViewProvider {
     constructor(context, schemaRegistry) {
@@ -262,6 +263,21 @@ class SchemaViewProvider {
                         break;
                     case 'setFieldUiType':
                         await this._handleSetFieldUiType(msg.tableName, msg.fieldName, msg.uiType);
+                        break;
+                    case 'getScreens':
+                        this._handleGetScreens();
+                        break;
+                    case 'addScreen':
+                        await this._handleAddScreen(msg.screen);
+                        break;
+                    case 'removeScreen':
+                        await this._handleRemoveScreen(msg.screenName);
+                        break;
+                    case 'updateScreen':
+                        await this._handleUpdateScreen(msg.screenName, msg.screen);
+                        break;
+                    case 'previewScreen':
+                        this._handlePreviewScreen(msg.screenName);
                         break;
                     case 'extractSchemaSql':
                         this._handleExtractSchemaSql();
@@ -1423,6 +1439,7 @@ class SchemaViewProvider {
             <button class="tab-btn" onclick="switchTab('actions')" id="tabActions">Actions</button>
             <button class="tab-btn" onclick="switchTab('auth')" id="tabAuth">Auth</button>
             <button class="tab-btn" onclick="switchTab('quickstart')" id="tabQuickstart">Quick Start</button>
+            <button class="tab-btn" id="tabScreens" onclick="switchTab('screens')">Screens</button>
         </div>
         <div class="header-actions">
             <button class="btn btn-primary" onclick="addTable()">${this._svgAddIcon()} Add Table</button>
@@ -1962,6 +1979,13 @@ class SchemaViewProvider {
         </div>
     </div>
 
+    <div id="tabScreensContent" class="tab-content">
+      <div class="screens-toolbar">
+        <button class="btn btn-primary" onclick="addScreen()">+ New Screen</button>
+      </div>
+      <div id="screensList"></div>
+    </div>
+
     <!-- Table Settings Modal -->
     <div id="tableSettingsOverlay" class="modal-overlay" style="display:none;" onclick="closeTableSettings(event)">
         <div class="modal-content" onclick="event.stopPropagation()" style="background:#1e1e1e;border:1px solid #444;border-radius:8px;padding:24px;max-width:620px;margin:60px auto;color:#ccc;">
@@ -2155,6 +2179,65 @@ class SchemaViewProvider {
                 ${fkButton}
             </div>
         </div>`;
+    }
+
+    _handleGetScreens() {
+        const screens = this.schemaRegistry.getScreens();
+        const tables = this.schemaRegistry.getTables();
+        const tableInfo = {};
+        for (const t of tables) {
+            const table = this.schemaRegistry.getTable(t);
+            tableInfo[t] = { fields: table.fields.map(f => ({ name: f.name, type: f.type })) };
+        }
+        const queries = this.schemaRegistry.getQueries();
+        const queryNames = Object.keys(queries);
+        const actionRoutes = this.schemaRegistry.getActionRoutes();
+        this._panel.webview.postMessage({ command: 'screensLoaded', screens, tables: tableInfo, queryNames, actionRoutes });
+    }
+
+    async _handleAddScreen(screen) {
+        try {
+            await this.schemaRegistry.addScreen(screen);
+            this._handleGetScreens();
+        } catch (e) {
+            this._panel.webview.postMessage({ command: 'screenError', error: e.message });
+        }
+    }
+
+    async _handleRemoveScreen(name) {
+        try {
+            await this.schemaRegistry.removeScreen(name);
+            this._handleGetScreens();
+        } catch (e) {
+            this._panel.webview.postMessage({ command: 'screenError', error: e.message });
+        }
+    }
+
+    async _handleUpdateScreen(name, updates) {
+        try {
+            await this.schemaRegistry.updateScreen(name, updates);
+            this._handleGetScreens();
+        } catch (e) {
+            this._panel.webview.postMessage({ command: 'screenError', error: e.message });
+        }
+    }
+
+    _handlePreviewScreen(name) {
+        const screen = this.schemaRegistry.getScreen(name);
+        if (!screen) {
+            this._panel.webview.postMessage({ command: 'screenError', error: `Screen "${name}" not found` });
+            return;
+        }
+        const gen = new ScreenGenerator(this.schemaRegistry);
+        let html = '';
+        if (screen.type === 'transaction') {
+            html = gen.generateTransactionPage(screen);
+        } else if (screen.type === 'report') {
+            html = gen.generateReportPage(screen);
+        } else if (screen.type === 'widget') {
+            html = gen.generateWidgetHtml(screen);
+        }
+        this._panel.webview.postMessage({ command: 'screenPreviewResult', screenName: name, html });
     }
 
     _escapeHtml(str) {
