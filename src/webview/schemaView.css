@@ -70,8 +70,8 @@
         border: 1px solid #3c3c3c;
         border-radius: 10px;
         overflow: hidden;
-        width: 320px;
-        flex-shrink: 0;
+        min-width: 280px;
+        flex: 1 1 auto;
     }
     .table-card-header {
         background: #2d2d2d;
@@ -114,7 +114,11 @@
     .field-name {
         font-family: 'Consolas', 'Courier New', monospace;
         font-size: 13px;
-        flex: 1;
+        flex: 0 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 40px;
     }
     .field-type {
         font-size: 11px;
@@ -123,11 +127,13 @@
         background: #1e1e1e;
         padding: 2px 6px;
         border-radius: 4px;
+        flex-shrink: 0;
     }
     .field-constraints {
         display: flex;
         gap: 4px;
         font-size: 10px;
+        flex-shrink: 0;
     }
     .badge {
         padding: 1px 6px;
@@ -139,6 +145,15 @@
     .badge-fk { background: #004466; color: #4fc3f7; }
     .badge-nn { background: #440000; color: #ff6b6b; }
     .badge-default { background: #224422; color: #6bff6b; }
+    .badge-ui { background: #443366; color: #ce93d8; }
+    select.ui-type-select {
+        font-size: 10px; padding: 1px 2px; margin-right: 4px;
+        border: 1px solid var(--vscode-dropdown-border, #555);
+        background: var(--vscode-dropdown-background, #333);
+        color: var(--vscode-dropdown-foreground, #ccc);
+        border-radius: 3px;
+        max-width: 85px;
+    }
     .field-actions { flex-shrink: 0; display: flex; gap: 2px; }
 
     /* FK reference highlighting */
@@ -1033,3 +1048,20 @@
         .tables-container { flex-direction: column; }
         .table-card { width: 100%; }
     }
+
+    /* Screens Tab */
+    .screens-toolbar { margin-bottom: 16px; }
+    .screen-card { background: #2d2d2d; border: 1px solid #3c3c3c; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .screen-card-header { display: flex; align-items: center; gap: 8px; }
+    .screen-card-type { display: inline-block; padding: 2px 8px; border-radius: 3px; color: #fff; font-size: 0.8em; text-transform: uppercase; font-weight: 600; }
+    .screen-card-actions { display: flex; gap: 4px; }
+    .screen-form { }
+    .screen-form-section { margin-bottom: 16px; padding: 12px; background: #252526; border-radius: 6px; }
+    .screen-form-section h4 { margin-bottom: 8px; color: #0078d4; font-size: 0.9em; text-transform: uppercase; }
+    .screen-form-section label { display: block; margin-bottom: 6px; color: #d4d4d4; font-size: 0.9em; }
+    .screen-form-section input[type="text"], .screen-form-section input[type="number"], .screen-form-section select { background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; padding: 4px 8px; border-radius: 3px; margin-left: 4px; }
+    .screen-form-section input[type="checkbox"] { margin-right: 4px; }
+    .screen-form-field-row, .screen-form-hf-row, .screen-form-col-row, .screen-form-cc-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 4px; background: #333; border-radius: 4px; flex-wrap: wrap; }
+    .screen-form-field-row select, .screen-form-hf-row select, .screen-form-col-row select, .screen-form-cc-row select { background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; padding: 2px 4px; border-radius: 3px; }
+    .screen-form-field-row input, .screen-form-hf-row input, .screen-form-col-row input, .screen-form-cc-row input { background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; padding: 2px 4px; border-radius: 3px; width: 120px; }
+    .se-field-dot { color: #888; font-weight: bold; }

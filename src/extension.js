@@ -432,6 +432,53 @@ function activate(context) {
         })
     );
 
+    // TailwindCSS CLI setup
+    context.subscriptions.push(
+        vscode.commands.registerCommand('node-sqlite-ai.tailwindSetup', async () => {
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+            if (!root) {
+                vscode.window.showErrorMessage('njs: Open a folder first');
+                return;
+            }
+            const terminal = vscode.window.createTerminal('TailwindCSS Setup');
+            terminal.show();
+            terminal.sendText(`cd "${root}"`);
+            terminal.sendText('npm install -D tailwindcss @tailwindcss/cli');
+            // Create src/input.css
+            const srcDir = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'src');
+            try {
+                await vscode.workspace.fs.stat(srcDir);
+            } catch {
+                await vscode.workspace.fs.createDirectory(srcDir);
+            }
+            const inputCss = vscode.Uri.joinPath(srcDir, 'input.css');
+            try {
+                await vscode.workspace.fs.stat(inputCss);
+                vscode.window.showInformationMessage('njs: src/input.css already exists');
+            } catch {
+                await vscode.workspace.fs.writeFile(inputCss, Buffer.from('@import "tailwindcss";', 'utf-8'));
+            }
+            // Read and update package.json scripts
+            const pkgPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'package.json');
+            try {
+                const pkgBytes = await vscode.workspace.fs.readFile(pkgPath);
+                const pkg = JSON.parse(Buffer.from(pkgBytes).toString('utf-8'));
+                if (!pkg.scripts) pkg.scripts = {};
+                if (!pkg.scripts.css) {
+                    pkg.scripts.css = 'npx @tailwindcss/cli -i ./src/input.css -o ./public/output.css';
+                }
+                if (!pkg.scripts['css:watch']) {
+                    pkg.scripts['css:watch'] = 'npx @tailwindcss/cli -i ./src/input.css -o ./public/output.css --watch';
+                }
+                await vscode.workspace.fs.writeFile(pkgPath, Buffer.from(JSON.stringify(pkg, null, 2), 'utf-8'));
+                terminal.sendText('npm run css:watch');
+                vscode.window.showInformationMessage('njs: TailwindCSS setup done! npm run css:watch is running.');
+            } catch {
+                vscode.window.showInformationMessage('njs: TailwindCSS installed. Add scripts manually if no package.json.');
+            }
+        })
+    );
+
     context.subscriptions.push({ dispose: () => {
         if (schemaViewProvider) schemaViewProvider.dispose();
         serverManager.stop();

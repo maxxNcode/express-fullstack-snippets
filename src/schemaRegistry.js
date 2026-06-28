@@ -6,7 +6,7 @@ const SCHEMA_FILE = '.njs-schema.json';
 class SchemaRegistry {
     constructor() {
         this.schemaPath = null;
-        this.schema = { tables: {} };
+        this.schema = { tables: {}, screens: [] };
     }
 
     async init(workspaceRoot) {
@@ -21,7 +21,7 @@ class SchemaRegistry {
                 console.error('njs: Schema repair error:', repairErr);
             }
         } catch {
-            this.schema = { tables: {} };
+            this.schema = { tables: {}, screens: [] };
         }
         return true;
     }
@@ -264,6 +264,71 @@ class SchemaRegistry {
         return this.save();
     }
 
+    // --- Screens management ---
+
+    getScreens() {
+        return this.schema.screens || [];
+    }
+
+    getScreen(name) {
+        const screens = this.getScreens();
+        return screens.find(s => s.name === name) || null;
+    }
+
+    async addScreen(screen) {
+        if (!screen.name || !screen.type) {
+            throw new Error('Screen must have a name and type');
+        }
+        const existing = this.getScreen(screen.name);
+        if (existing) {
+            throw new Error(`Screen "${screen.name}" already exists`);
+        }
+        const validTypes = ['transaction', 'report', 'widget'];
+        if (!validTypes.includes(screen.type)) {
+            throw new Error(`Invalid screen type "${screen.type}". Must be one of: ${validTypes.join(', ')}`);
+        }
+        if (!this.schema.screens) this.schema.screens = [];
+        this.schema.screens.push(JSON.parse(JSON.stringify(screen)));
+        await this.save();
+    }
+
+    async removeScreen(name) {
+        if (!this.schema.screens) return;
+        const index = this.schema.screens.findIndex(s => s.name === name);
+        if (index === -1) {
+            throw new Error(`Screen "${name}" not found`);
+        }
+        this.schema.screens.splice(index, 1);
+        await this.save();
+    }
+
+    async updateScreen(name, updates) {
+        const screen = this.getScreen(name);
+        if (!screen) {
+            throw new Error(`Screen "${name}" not found`);
+        }
+        if (updates.name && updates.name !== name) {
+            const dup = this.getScreen(updates.name);
+            if (dup) throw new Error(`Screen "${updates.name}" already exists`);
+        }
+        if (!this.schema.screens) this.schema.screens = [];
+        const idx = this.schema.screens.findIndex(s => s.name === name);
+        this.schema.screens[idx] = this._deepMerge(screen, updates);
+        await this.save();
+    }
+
+    _deepMerge(target, source) {
+        const result = JSON.parse(JSON.stringify(target));
+        for (const key of Object.keys(source)) {
+            if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+                result[key] = this._deepMerge(result[key] || {}, source[key]);
+            } else {
+                result[key] = JSON.parse(JSON.stringify(source[key]));
+            }
+        }
+        return result;
+    }
+
     /**
      * Parse a CREATE TABLE SQL statement into table name and field definitions.
      * Supports: CREATE TABLE [IF NOT EXISTS] name (colDefs...)
@@ -302,7 +367,7 @@ class SchemaRegistry {
 
             const rawName = tokens[0];
             this._validateFieldName(rawName, `"${tableName}"`);
-            const field = { name: rawName, type: 'TEXT' };
+            const field = { name: rawName, type: 'TEXT', rawType: tokens[1] };
 
             field.type = this._parseSqlType(tokens[1]);
 
@@ -455,7 +520,7 @@ class SchemaRegistry {
             const rawName = tokens[0].replace(/`/g, '');
             if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(rawName)) continue;
 
-            const field = { name: rawName, type: 'TEXT' };
+            const field = { name: rawName, type: 'TEXT', rawType: tokens[1].toUpperCase().replace(/\(.*\)/, '') };
 
             field.type = this._parseSqlType(tokens[1]);
 

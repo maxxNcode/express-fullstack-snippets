@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const path = require('path');
 const { CodeGenerator } = require('./generator');
 const { runQuery, findDbFiles } = require('./dbRunner');
+const ScreenGenerator = require('./screenGenerator');
 
 class SchemaViewProvider {
     constructor(context, schemaRegistry) {
@@ -259,6 +260,24 @@ class SchemaViewProvider {
                         break;
                     case 'setTableSettings':
                         await this._handleSetTableSettings(msg.tableName, msg.settings);
+                        break;
+                    case 'setFieldUiType':
+                        await this._handleSetFieldUiType(msg.tableName, msg.fieldName, msg.uiType);
+                        break;
+                    case 'getScreens':
+                        this._handleGetScreens();
+                        break;
+                    case 'addScreen':
+                        await this._handleAddScreen(msg.screen);
+                        break;
+                    case 'removeScreen':
+                        await this._handleRemoveScreen(msg.screenName);
+                        break;
+                    case 'updateScreen':
+                        await this._handleUpdateScreen(msg.screenName, msg.screen);
+                        break;
+                    case 'previewScreen':
+                        this._handlePreviewScreen(msg.screenName);
                         break;
                     case 'extractSchemaSql':
                         this._handleExtractSchemaSql();
@@ -593,6 +612,24 @@ class SchemaViewProvider {
         try {
             await this.schemaRegistry.setTableSettings(tableName, settings);
             vscode.window.showInformationMessage(`njs: Settings saved for "${tableName}"`);
+            this._refresh();
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
+    }
+
+    async _handleSetFieldUiType(tableName, fieldName, uiType) {
+        try {
+            const table = this.schemaRegistry.getTable(tableName);
+            if (!table) throw new Error(`Table "${tableName}" not found`);
+            const field = table.fields.find(f => f.name === fieldName);
+            if (!field) throw new Error(`Field "${fieldName}" not found`);
+            if (uiType && uiType !== 'auto') {
+                field.uiType = uiType;
+            } else {
+                delete field.uiType;
+            }
+            await this.schemaRegistry.save();
             this._refresh();
         } catch (err) {
             vscode.window.showErrorMessage(`njs: ${err.message}`);
@@ -1402,6 +1439,7 @@ class SchemaViewProvider {
             <button class="tab-btn" onclick="switchTab('actions')" id="tabActions">Actions</button>
             <button class="tab-btn" onclick="switchTab('auth')" id="tabAuth">Auth</button>
             <button class="tab-btn" onclick="switchTab('quickstart')" id="tabQuickstart">Quick Start</button>
+            <button class="tab-btn" id="tabScreens" onclick="switchTab('screens')">Screens</button>
         </div>
         <div class="header-actions">
             <button class="btn btn-primary" onclick="addTable()">${this._svgAddIcon()} Add Table</button>
@@ -1941,6 +1979,13 @@ class SchemaViewProvider {
         </div>
     </div>
 
+    <div id="tabScreensContent" class="tab-content">
+      <div class="screens-toolbar">
+        <button class="btn btn-primary" onclick="addScreen()">+ New Screen</button>
+      </div>
+      <div id="screensList"></div>
+    </div>
+
     <!-- Table Settings Modal -->
     <div id="tableSettingsOverlay" class="modal-overlay" style="display:none;" onclick="closeTableSettings(event)">
         <div class="modal-content" onclick="event.stopPropagation()" style="background:#1e1e1e;border:1px solid #444;border-radius:8px;padding:24px;max-width:620px;margin:60px auto;color:#ccc;">
@@ -1998,6 +2043,28 @@ class SchemaViewProvider {
                     <input type="checkbox" id="tsShowDelete" />
                     <span style="font-weight:600;color:#ddd;">Show "Delete" button alongside "Deactivate" for hard-delete</span>
                 </label>
+            </div>
+
+            <div class="rule-row" style="margin-bottom:14px;">
+                <label style="font-weight:600;color:#ddd;display:block;margin-bottom:4px;">Rows per page (list view)</label>
+                <select id="tsPageSize" style="width:100%;padding:4px 8px;font-size:13px;">
+                    <option value="5">5</option>
+                    <option value="10" selected>10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+
+            <div class="rule-row" style="margin-bottom:14px;">
+                <label style="font-weight:600;color:#ddd;display:block;margin-bottom:4px;">Default sort column</label>
+                <select id="tsSortField" style="width:100%;padding:4px 8px;font-size:13px;">
+                    <option value="">None</option>
+                </select>
+                <div style="display:flex;gap:12px;margin-top:6px;">
+                    <label style="font-size:13px;"><input type="radio" name="tsSortDir" value="asc" checked /> Ascending</label>
+                    <label style="font-size:13px;"><input type="radio" name="tsSortDir" value="desc" /> Descending</label>
+                </div>
             </div>
 
             <div class="rule-actions" style="margin-top:16px;display:flex;gap:8px;">
@@ -2068,6 +2135,9 @@ class SchemaViewProvider {
             let defVal = String(field.default).replace(/^['"]|['"]$/g, '');
             constraints += `<span class="badge badge-default">=${this._escapeHtml(defVal)}</span>`;
         }
+        if (field.uiType) {
+            constraints += `<span class="badge badge-ui">[${this._escapeHtml(field.uiType)}]</span>`;
+        }
 
         const fkButton = isFK
             ? `<button class="btn btn-danger btn-sm" onclick="removeFK('${jsSafeTable}', '${jsSafeField}', event)" title="Remove FK">${this._svgCloseIcon()}</button>`
@@ -2087,8 +2157,92 @@ class SchemaViewProvider {
             <span class="field-name">${safeFieldName}</span>
             <span class="field-type">${typeLabel}</span>
             <div class="field-constraints">${constraints}</div>
-            <div class="field-actions">${fkButton}</div>
+            <div class="field-actions">
+                <select class="ui-type-select" title="UI control type"
+                    onchange="setFieldUiType('${jsSafeTable}', '${jsSafeField}', this.value)"
+                    onclick="event.stopPropagation();">
+                    <option value="auto"${field.uiType ? '' : ' selected'}>Auto</option>
+                    <option value="text"${field.uiType === 'text' ? ' selected' : ''}>text</option>
+                    <option value="number"${field.uiType === 'number' ? ' selected' : ''}>number</option>
+                    <option value="textarea"${field.uiType === 'textarea' ? ' selected' : ''}>textarea</option>
+                    <option value="fk-select"${field.uiType === 'fk-select' ? ' selected' : ''}>fk-select</option>
+                    <option value="checkbox"${field.uiType === 'checkbox' ? ' selected' : ''}>checkbox</option>
+                    <option value="date"${field.uiType === 'date' ? ' selected' : ''}>date</option>
+                    <option value="time"${field.uiType === 'time' ? ' selected' : ''}>time</option>
+                    <option value="email"${field.uiType === 'email' ? ' selected' : ''}>email</option>
+                    <option value="password"${field.uiType === 'password' ? ' selected' : ''}>password</option>
+                    <option value="url"${field.uiType === 'url' ? ' selected' : ''}>url</option>
+                    <option value="tel"${field.uiType === 'tel' ? ' selected' : ''}>tel</option>
+                    <option value="color"${field.uiType === 'color' ? ' selected' : ''}>color</option>
+                    <option value="hidden"${field.uiType === 'hidden' ? ' selected' : ''}>hidden</option>
+                </select>
+                ${fkButton}
+            </div>
         </div>`;
+    }
+
+    _handleGetScreens() {
+        if (!this._panel) return;
+        const screens = this.schemaRegistry.getScreens();
+        const tables = this.schemaRegistry.getTables();
+        const tableInfo = {};
+        for (const t of tables) {
+            const table = this.schemaRegistry.getTable(t);
+            tableInfo[t] = { fields: table.fields.map(f => ({ name: f.name, type: f.type })) };
+        }
+        const queries = this.schemaRegistry.getQueries();
+        const queryNames = Object.keys(queries);
+        const actionRoutes = this.schemaRegistry.getActionRoutes();
+        this._panel.webview.postMessage({ command: 'screensLoaded', screens, tables: tableInfo, queryNames, actionRoutes });
+    }
+
+    async _handleAddScreen(screen) {
+        if (!this._panel) return;
+        try {
+            await this.schemaRegistry.addScreen(screen);
+            this._handleGetScreens();
+        } catch (e) {
+            this._panel.webview.postMessage({ command: 'screenError', error: e.message });
+        }
+    }
+
+    async _handleRemoveScreen(name) {
+        if (!this._panel) return;
+        try {
+            await this.schemaRegistry.removeScreen(name);
+            this._handleGetScreens();
+        } catch (e) {
+            this._panel.webview.postMessage({ command: 'screenError', error: e.message });
+        }
+    }
+
+    async _handleUpdateScreen(name, updates) {
+        if (!this._panel) return;
+        try {
+            await this.schemaRegistry.updateScreen(name, updates);
+            this._handleGetScreens();
+        } catch (e) {
+            this._panel.webview.postMessage({ command: 'screenError', error: e.message });
+        }
+    }
+
+    _handlePreviewScreen(name) {
+        if (!this._panel) return;
+        const screen = this.schemaRegistry.getScreen(name);
+        if (!screen) {
+            this._panel.webview.postMessage({ command: 'screenError', error: `Screen "${name}" not found` });
+            return;
+        }
+        const gen = new ScreenGenerator(this.schemaRegistry);
+        let html = '';
+        if (screen.type === 'transaction') {
+            html = gen.generateTransactionPage(screen);
+        } else if (screen.type === 'report') {
+            html = gen.generateReportPage(screen);
+        } else if (screen.type === 'widget') {
+            html = gen.generateWidgetHtml(screen);
+        }
+        this._panel.webview.postMessage({ command: 'screenPreviewResult', screenName: name, html });
     }
 
     _escapeHtml(str) {

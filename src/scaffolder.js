@@ -23,6 +23,8 @@
  *   const scaffolder = new Scaffer(schemaRegistry, codeGenerator, authGenerator, ruleEngine);
  *   const files = scaffolder.generateAll(tableNames, authConfig, rules);
  */
+const ScreenGenerator = require('./screenGenerator');
+
 class Scaffer {
     constructor(schemaRegistry) {
         const { CodeGenerator } = require('./generator');
@@ -33,6 +35,7 @@ class Scaffer {
         this.codeGen = new CodeGenerator(schemaRegistry);
         this.authGen = new AuthGenerator(schemaRegistry);
         this.ruleEngine = new RuleEngine(schemaRegistry);
+        this.screenGen = new ScreenGenerator(schemaRegistry);
     }
 
     /**
@@ -94,6 +97,53 @@ class Scaffer {
                     files[`public/${report.name}.html`] = this.ruleEngine.generateReportHtml(report.name, cols);
                 }
             }
+        }
+
+        // Generate screen pages
+        const screens = this.schemaRegistry.getScreens();
+        if (screens && screens.length > 0) {
+            let serverCode = files['server.js'] || '';
+            const screenRoutes = [];
+            for (const screen of screens) {
+                if (screen.type === 'transaction') {
+                    files[`public/${screen.name}.html`] = this.screenGen.generateTransactionPage(screen);
+                    const dataRoute = this.screenGen.generateTransactionDataRoute(screen);
+                    if (dataRoute) {
+                        screenRoutes.push(dataRoute);
+                    }
+                    const actionRoutes = this.schemaRegistry.getActionRoutes();
+                    const actionRoute = screen.input && actionRoutes.find(r => r.name === screen.input.actionRoute);
+                    if (actionRoute) {
+                        const actionCode = this._generateActionRouteCode(actionRoute);
+                        const submitRoute = actionCode.replace(
+                            `app.${actionRoute.method || 'POST'}('/api/${actionRoute.name}'`,
+                            `app.post('/api/${screen.name}/submit'`
+                        );
+                        screenRoutes.push(submitRoute);
+                    }
+                } else if (screen.type === 'report') {
+                    files[`public/${screen.name}.html`] = this.screenGen.generateReportPage(screen);
+                    if (screen.query) {
+                        const query = this.schemaRegistry.getQuery(screen.query);
+                        if (query) {
+                            let reportRoute = this.codeGen.generateReportServer(screen.name, query.columns, null, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
+                            if (screen.auth === false) {
+                                reportRoute = reportRoute.replace(', authenticate', '');
+                            }
+                            screenRoutes.push(reportRoute);
+                        }
+                    }
+                } else if (screen.type === 'widget') {
+                    const widgetHtml = this.screenGen.generateWidgetHtml(screen);
+                    if (files['public/dashboard.html']) {
+                        files['public/dashboard.html'] = files['public/dashboard.html'].replace('</div>\n</body>', widgetHtml + '\n</div>\n</body>');
+                    }
+                }
+            }
+            if (screenRoutes.length > 0 && serverCode.includes('// Error handling middleware')) {
+                serverCode = serverCode.replace('// Error handling middleware', screenRoutes.join('\n\n') + '\n\n// Error handling middleware');
+            }
+            files['server.js'] = serverCode;
         }
 
         return files;
@@ -485,6 +535,14 @@ class Scaffer {
         html += '    .status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;}\n';
         html += '    .status-active{background:#1b5e20;color:#a5d6a7;}\n';
         html += '    .status-inactive{background:#b71c1c;color:#ef9a9a;}\n';
+        html += '    .pg-btn{padding:4px 10px;background:#333;color:#fff;border:1px solid #888;border-radius:3px;cursor:pointer;font-size:12px;}\n';
+        html += '    .pg-btn[disabled]{opacity:0.5;cursor:default;}\n';
+        html += '    .pg-info{padding:4px 10px;color:#555;font-size:13px;}\n';
+        html += '    .search-bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;}\n';
+        html += '    .search-bar input{flex:1;padding:6px 10px;font-size:14px;border:1px solid #ddd;border-radius:4px;}\n';
+        html += '    .col-menu{display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid #ddd;border-radius:4px;padding:8px;z-index:10;min-width:180px;max-height:300px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.15);}\n';
+        html += '    .col-menu label{display:block;padding:4px 8px;font-size:13px;white-space:nowrap;cursor:pointer;}\n';
+        html += '    .col-menu label input{margin-right:6px;width:auto;display:inline;}\n';
         if (isModalEdit) {
             html += '    .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:none;align-items:center;justify-content:center;}\n';
             html += '    .modal-box{background:#fff;max-width:500px;width:90%;padding:24px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);}\n';
@@ -539,23 +597,74 @@ class Scaffer {
                     html += '            <input type="text" name="' + f.name + '" value="' + active + '"' + required + ' />\n';
                 }
                 html += '          </div>\n';
-            } else if (f.fk) {
-                html += '          <div>\n';
-                html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
-                html += '            <select id="' + tableName.toLowerCase() + '_' + f.name + '" name="' + f.name + '"' + required + '>\n';
-                html += '              <option value="">Select ' + f.fk.table + '</option>\n';
-                html += '            </select>\n';
-                html += '          </div>\n';
-            } else if (f.type === 'REAL' || f.type === 'INTEGER') {
-                html += '          <div>\n';
-                html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
-                html += '            <input type="number" name="' + f.name + '" step="' + (f.type === 'REAL' ? 'any' : '1') + '" placeholder="' + label + '"' + required + ' />\n';
-                html += '          </div>\n';
             } else {
-                html += '          <div>\n';
-                html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
-                html += '            <input type="text" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
-                html += '          </div>\n';
+                const uiType = this.codeGen._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <select id="' + tableName.toLowerCase() + '_' + f.name + '" name="' + f.name + '"' + required + '>\n';
+                    html += '              <option value="">Select ' + f.fk.table + '</option>\n';
+                    html += '            </select>\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'checkbox') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">\n';
+                    html += '              <input type="checkbox" name="' + f.name + '" value="1"> ' + label + '\n';
+                    html += '            </label>\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'textarea') {
+                    html += '          <div style="flex:1 1 100%;">\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <textarea name="' + f.name + '" placeholder="' + label + '"' + required + ' style="min-height:60px;"></textarea>\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'date') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="date" name="' + f.name + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'time') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="time" name="' + f.name + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'email') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="email" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'password') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="password" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'url') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="url" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'tel') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="tel" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'color') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="color" name="' + f.name + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else if (uiType === 'hidden') {
+                    html += '          <input type="hidden" name="' + f.name + '">\n';
+                } else if (uiType === 'number') {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="number" name="' + f.name + '" step="' + (f.type === 'REAL' ? 'any' : '1') + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                } else {
+                    html += '          <div>\n';
+                    html += '            <label style="font-size:12px;color:#888;margin-bottom:2px;display:block;">' + label + '</label>\n';
+                    html += '            <input type="text" name="' + f.name + '" placeholder="' + label + '"' + required + ' />\n';
+                    html += '          </div>\n';
+                }
             }
 
             if ((i + 1) % 2 === 0 && i + 1 < fields.length) {
@@ -640,9 +749,23 @@ class Scaffer {
         // Table card
         html += '    <div class="card">\n';
         html += '      <h2>' + displayName + ' Records</h2>\n';
+        html += '      <div class="search-bar">\n';
+        html += '        <input type="search" id="searchInput" placeholder="Search records..." oninput="searchRecords(this.value)">\n';
+        html += '        <div style="position:relative;">\n';
+        html += '          <button type="button" class="btn-primary btn-sm" onclick="toggleColMenu()">Columns</button>\n';
+        html += '          <div id="colMenu" class="col-menu">\n';
+        for (const f of fields) {
+            const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            html += '            <label><input type="checkbox" data-field="' + f.name + '" checked onchange="toggleCol(\'' + f.name + '\', this.checked)"> ' + label + '</label>\n';
+        }
+        html += '            <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol(\'__actions__\', this.checked)"> Actions</label>\n';
+        html += '          </div>\n';
+        html += '        </div>\n';
+        html += '      </div>\n';
         html += '      <div id="recordsTable">\n';
         html += '        <p style="color:#888;font-size:13px;">Loading...</p>\n';
         html += '      </div>\n';
+        html += '      <div id="paginationControls" style="display:flex;gap:4px;align-items:center;justify-content:center;margin-top:12px;"></div>\n';
         html += '    </div>\n';
         html += '  </div>\n\n';
 
@@ -650,6 +773,12 @@ class Scaffer {
         html += '  <script>\n';
         html += '    const API = "' + api + '";\n';
         html += '    let editId = null;\n';
+        html += '    let _allItems = [];\n';
+        html += '    let _currentPage = 1;\n';
+        html += '    let _searchTerm = "";\n';
+        html += '    let _sortField = "' + (s.sortField || '') + '";\n';
+        html += '    let _sortDir = "' + (s.sortDir || 'asc') + '";\n';
+        html += '    const _pageSize = ' + (s.pageSize || 10) + ';\n';
         if (hasAuth) {
             html += '    const _fetch = authFetch;\n';
         } else {
@@ -664,61 +793,143 @@ class Scaffer {
         html += '      } catch (e) { /* FK data not critical */ }\n';
         html += '    }\n\n';
 
-        // Load records
+        // Load records (fetch all, then render with filter/sort/paginate)
         html += '    async function loadRecords() {\n';
         html += '      try {\n';
         html += '        const res = await _fetch(API);\n';
         html += '        if (!res.ok) throw new Error("Failed to load");\n';
-        html += '        const data = await res.json();\n';
-        html += '        const container = document.getElementById("recordsTable");\n';
-        html += '        if (!data || data.length === 0) {\n';
-        html += '          container.innerHTML = \'<p style="color:#888;padding:12px;text-align:center;">No records yet. Add one above.</p>\';\n';
-        html += '          return;\n';
-        html += '        }\n';
-        html += '        let html = \'<table><thead><tr>\';\n';
-
-        for (const f of fields) {
-            const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            html += "        html += '<th>" + label + "</th>';\n";
-        }
-        html += "        html += '<th>Actions</th></tr></thead><tbody>';\n";
-
-        html += '        data.forEach(function(row) {\n';
-        html += "          html += '<tr>';\n";
-        for (const f of fields) {
-            const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-            if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
-                const active = s.statusActiveValue;
-                const inactive = s.statusInactiveValue;
-                html += "          html += '<td>' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
-            } else {
-                html += "          html += '<td>' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
-            }
-        }
-        html += "          html += '<td class=\"actions\">';\n";
-        html += "          html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
-        if (hasStat) {
-            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ';\n";
-            if (showDelete) {
-                html += "          html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
-            }
-        } else {
-            html += "          html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
-        }
-        html += "          html += '</td></tr>';\n";
-        html += '        });\n';
-        html += "        html += '</tbody></table>';\n";
-        html += '        container.innerHTML = html;\n';
+        html += '        _allItems = await res.json();\n';
+        html += '        _currentPage = 1;\n';
+        html += '        _searchTerm = "";\n';
+        html += "        document.getElementById('searchInput').value = '';\n";
+        html += '        renderRecords();\n';
         html += '      } catch (err) {\n';
         html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + err.message + '</p>';\n";
         html += '      }\n';
         html += '    }\n\n';
 
+        // Render records with filter, sort, paginate
+        html += '    function renderRecords() {\n';
+        html += '      let items = _allItems;\n';
+        html += '      if (_searchTerm) {\n';
+        html += '        var term = _searchTerm.toLowerCase();\n';
+        html += '        items = items.filter(function(i) { return Object.values(i).some(function(v) { return String(v).toLowerCase().includes(term); }); });\n';
+        html += '      }\n';
+        html += '      if (_sortField) {\n';
+        html += '        items.sort(function(a, b) {\n';
+        html += '          var va = a[_sortField], vb = b[_sortField];\n';
+        html += '          if (va == null) va = ""; if (vb == null) vb = "";\n';
+        html += '          if (typeof va === "number") return _sortDir === "asc" ? va - vb : vb - va;\n';
+        html += '          va = String(va).toLowerCase(); vb = String(vb).toLowerCase();\n';
+        html += '          return _sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);\n';
+        html += '        });\n';
+        html += '      }\n';
+        html += '      var total = items.length;\n';
+        html += '      var totalPages = Math.ceil(total / _pageSize) || 1;\n';
+        html += '      if (_currentPage > totalPages) _currentPage = totalPages;\n';
+        html += '      var start = (_currentPage - 1) * _pageSize;\n';
+        html += '      var page = items.slice(start, start + _pageSize);\n';
+        html += '      var container = document.getElementById("recordsTable");\n';
+        html += '      if (!total) {\n';
+        html += '        container.innerHTML = \'<p style="color:#888;padding:12px;text-align:center;">No records yet. Add one above.</p>\';\n';
+        html += "        document.getElementById('paginationControls').innerHTML = '';\n";
+        html += '        return;\n';
+        html += '      }\n';
+        html += '      var html = \'<table><thead><tr>\';\n';
+
+        for (const f of fields) {
+            const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            html += "      html += '<th onclick=\"sortRecords(\\'" + f.name + "\\')\" data-field=\"" + f.name + "\" style=\"cursor:pointer;user-select:none;\">" + label + "</th>';\n";
+        }
+        html += "      html += '<th data-field=\"__actions__\">Actions</th></tr></thead><tbody>';\n";
+
+        html += '      page.forEach(function(row) {\n';
+        html += "        html += '<tr>';\n";
+        for (const f of fields) {
+            const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
+            if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
+                const active = s.statusActiveValue;
+                const inactive = s.statusInactiveValue;
+                html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
+            } else {
+                html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
+            }
+        }
+        html += "        html += '<td class=\"actions\" data-field=\"__actions__\">';\n";
+        html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
+        if (hasStat) {
+            html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ';\n";
+            if (showDelete) {
+                html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
+            }
+        } else {
+            html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+        }
+        html += "        html += '</td></tr>';\n";
+        html += '      });\n';
+        html += "      html += '</tbody></table>';\n";
+        html += '      container.innerHTML = html;\n';
+        html += '      var pgHtml = "";\n';
+        html += "      pgHtml += '<button onclick=\"goToPage(1)\" class=\"pg-btn\">&laquo;</button>';\n";
+        html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage - 1) + ')\" class=\"pg-btn\"' + (_currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';\n";
+        html += "      pgHtml += '<span class=\"pg-info\">Page ' + _currentPage + ' of ' + totalPages + ' (' + total + ' total)</span>';\n";
+        html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage + 1) + ')\" class=\"pg-btn\"' + (_currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';\n";
+        html += "      pgHtml += '<button onclick=\"goToPage(' + totalPages + ')\" class=\"pg-btn\">&raquo;</button>';\n";
+        html += "      document.getElementById('paginationControls').innerHTML = pgHtml;\n";
+        html += '    }\n\n';
+
+        // Search
+        html += '    function searchRecords(term) {\n';
+        html += '      _searchTerm = term;\n';
+        html += '      _currentPage = 1;\n';
+        html += '      renderRecords();\n';
+        html += '    }\n\n';
+
+        // Sort
+        html += '    function sortRecords(field) {\n';
+        html += '      if (_sortField === field) {\n';
+        html += '        _sortDir = _sortDir === "asc" ? "desc" : "asc";\n';
+        html += '      } else {\n';
+        html += '        _sortField = field;\n';
+        html += '        _sortDir = "asc";\n';
+        html += '      }\n';
+        html += '      renderRecords();\n';
+        html += '    }\n\n';
+
+        // Go to page
+        html += '    function goToPage(page) {\n';
+        html += '      if (page < 1 || page > Math.ceil(_allItems.length / _pageSize)) return;\n';
+        html += '      _currentPage = page;\n';
+        html += '      renderRecords();\n';
+        html += '    }\n\n';
+
+        // Column visibility
+        html += '    function toggleCol(field, visible) {\n';
+        html += "      document.querySelectorAll('#recordsTable [data-field=\"' + field + '\"]').forEach(function(el) {\n";
+        html += '        el.style.display = visible ? "" : "none";\n';
+        html += '      });\n';
+        html += '    }\n\n';
+
+        // Column menu toggle
+        html += '    var colMenuVisible = false;\n';
+        html += '    function toggleColMenu() {\n';
+        html += '      colMenuVisible = !colMenuVisible;\n';
+        html += "      document.getElementById('colMenu').style.display = colMenuVisible ? 'block' : 'none';\n";
+        html += '    }\n';
+        html += "    document.addEventListener('click', function(e) {\n";
+        html += "      if (!e.target.closest('#colMenu, [onclick*=\"toggleColMenu\"]')) {\n";
+        html += "        document.getElementById('colMenu').style.display = 'none';\n";
+        html += '        colMenuVisible = false;\n';
+        html += '      }\n';
+        html += '    });\n\n';
+
         // Form submit handler (only creates when modal; also updates when inline)
         html += "    document.getElementById('recordForm').onsubmit = async function(e) {\n";
         html += '      e.preventDefault();\n';
         html += "      const form = e.target;\n";
-        html += "      const data = Object.fromEntries(new FormData(form));\n";
+        html += "      var fd = new FormData(form);\n";
+        html += "      form.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (!cb.checked) fd.set(cb.name, '0'); });\n";
+        html += "      const data = Object.fromEntries(fd);\n";
         html += "      const msg = document.getElementById('formMessage');\n";
         html += '      try {\n';
         if (isModalEdit) {
@@ -753,13 +964,16 @@ class Scaffer {
             html += '      editId = id;\n';
             for (const f of fields) {
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-                if (f.fk) {
+                const uiType = this.codeGen._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
                     const selectId = 'editModal_' + tableName.toLowerCase() + '_' + f.name;
                     html += "      if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
                 } else if (isStatus && s.statusUiStyle === 'radio') {
                     html += "      document.querySelectorAll('#editModalForm input[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value === row." + f.name + "); });\n";
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else if (uiType === 'checkbox') {
+                    html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {
                     html += "      var el = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (el) el.value = row." + f.name + " != null ? row." + f.name + " : '';\n";
                 }
@@ -774,7 +988,9 @@ class Scaffer {
 
             html += "    document.getElementById('editModalForm').onsubmit = async function(e) {\n";
             html += '      e.preventDefault();\n';
-            html += "      const data = Object.fromEntries(new FormData(e.target));\n";
+            html += "      var fd = new FormData(e.target);\n";
+            html += "      e.target.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (!cb.checked) fd.set(cb.name, '0'); });\n";
+            html += "      const data = Object.fromEntries(fd);\n";
             html += '      try {\n';
             html += "        await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
             html += '        closeEditModal();\n';
@@ -831,7 +1047,8 @@ class Scaffer {
             html += '        editId = id;\n';
             for (const f of fields) {
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-                if (f.fk) {
+                const uiType = this.codeGen._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
                     const selectId = tableName.toLowerCase() + '_' + f.name;
                     html += "        if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
                 } else if (isStatus && s.statusUiStyle === 'radio') {
@@ -840,6 +1057,8 @@ class Scaffer {
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]');\n";
                     html += "        if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
+                } else if (uiType === 'checkbox') {
+                    html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {
                     html += "        if (document.querySelector('[name=\\\"" + f.name + "\\\"]')) document.querySelector('[name=\\\"" + f.name + "\\\"]').value = row." + f.name + " != null ? row." + f.name + " : '';\n";
                 }
@@ -916,6 +1135,56 @@ class Scaffer {
         if (!table) return 'id';
         const pk = table.fields.find(f => f.pk);
         return pk ? pk.name : ((table.fields && table.fields[0]) ? table.fields[0].name : 'id');
+    }
+
+    _generateActionRouteCode(route) {
+        let code = `\n// Action Route: ${route.name} - ${route.description || ''}\n`;
+        const method = (route.method || 'POST').toLowerCase();
+        const authMiddleware = route.useJwt ? ', authenticate' : '';
+        code += `app.${method}('/api/${route.name}'${authMiddleware}, async (req, res) => {\n`;
+        code += `    try {\n`;
+        if (route.useJwt && route.identityField) {
+            code += `        const userId = req.user.id;\n`;
+        }
+        if (route.preChecks && route.preChecks.length > 0) {
+            for (const pc of route.preChecks) {
+                const identity = pc.identityField || route.identityField;
+                code += `        const ${pc.checkTable}Check = db.prepare(\`SELECT ${pc.checkField} FROM ${pc.checkTable} WHERE ${identity} = ?\`).get(userId);\n`;
+                code += `        if (!${pc.checkTable}Check || !(${pc.checkTable}Check.${pc.checkField} ${pc.operator} '${pc.checkValue}')) {\n`;
+                code += `            return res.status(403).json({ error: '${pc.errorMessage || 'Pre-check failed'}' });\n`;
+                code += `        }\n`;
+            }
+        }
+        if (route.limitChecks && route.limitChecks.length > 0) {
+            for (const lc of route.limitChecks) {
+                code += `        const count = db.prepare(\`SELECT COUNT(*) as cnt FROM ${lc.countTable} WHERE ${lc.groupField} = ?\`).get(userId);\n`;
+                if (lc.limitTable && lc.limitField) {
+                    code += `        const limit = db.prepare(\`SELECT ${lc.limitField} FROM ${lc.limitTable} LIMIT 1\`).get();\n`;
+                    code += `        if (count.cnt >= limit.${lc.limitField}) {\n`;
+                    code += `            return res.status(403).json({ error: '${lc.errorMessage || 'Limit exceeded'}' });\n`;
+                    code += `        }\n`;
+                }
+            }
+        }
+        const table = this.schemaRegistry.getTable(route.targetTable);
+        if (table) {
+            const nonPK = (table.fields || []).filter(f => !f.pk);
+            const cols = nonPK.map(f => f.name).join(', ');
+            code += `        const stmt = db.prepare(\`INSERT INTO ${route.targetTable} (${cols}) VALUES (${nonPK.map(() => '?').join(', ')})\`);\n`;
+            code += `        const result = stmt.run(${nonPK.map(f => `req.body.${f.name}`).join(', ')});\n`;
+        }
+        if (route.postActions && route.postActions.length > 0) {
+            for (const pa of route.postActions) {
+                code += `        db.prepare(\`UPDATE ${pa.setTable} SET ${pa.setField} = ${pa.setValue} WHERE ${pa.whereField} = ?\`).run(req.body.${pa.whereField});\n`;
+            }
+        }
+        code += `        res.status(201).json({ success: true, id: result ? result.lastInsertRowid : null });\n`;
+        code += `    } catch (err) {\n`;
+        code += `        console.error('Error in ${route.name}:', err);\n`;
+        code += `        res.status(500).json({ error: err.message });\n`;
+        code += `    }\n`;
+        code += `});\n`;
+        return code;
     }
 }
 

@@ -305,7 +305,7 @@ class AuthGenerator {
         html += '</div>\n\n';
 
         html += '<script>\n';
-        html += `document.getElementById('loginForm').onsubmit = async (e) => {\n`;
+        html += `document.getElementById('loginForm').onsubmit = async function(e) {\n`;
         html += '  e.preventDefault();\n';
         html += "  const data = Object.fromEntries(new FormData(e.target));\n";
         html += "  const errorEl = document.getElementById('loginError');\n";
@@ -416,7 +416,7 @@ class AuthGenerator {
         html += '</div>\n\n';
 
         html += '<script>\n';
-        html += `document.getElementById('registerForm').onsubmit = async (e) => {\n`;
+        html += `document.getElementById('registerForm').onsubmit = async function(e) {\n`;
         html += '  e.preventDefault();\n';
         html += '  const data = Object.fromEntries(new FormData(e.target));\n';
         html += "  const errorEl = document.getElementById('registerError');\n";
@@ -745,8 +745,10 @@ class AuthGenerator {
 
         code += '// --- Decode JWT payload (client-side only — no signature verification) ---\n';
         code += 'function decodeToken(token) {\n';
-        code += '  try { return JSON.parse(atob(token.split(\'.\')[1])); }\n';
-        code += '  catch (e) { return null; }\n';
+        code += '  try {\n';
+        code += '    var payload = token.split(\'.\')[1];\n';
+        code += '    return JSON.parse(atob(payload));\n';
+        code += '  } catch (e) { return null; }\n';
         code += '}\n\n';
 
         code += '// --- Check if a token exists in storage ---\n';

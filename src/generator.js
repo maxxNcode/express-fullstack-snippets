@@ -28,8 +28,30 @@ class CodeGenerator {
             statusInactiveValue: raw.statusInactiveValue || 'inactive',
             editMode: raw.editMode || 'put',
             showDeleteButton: raw.showDeleteButton === true,
-            editStyle: raw.editStyle || 'form'
+            editStyle: raw.editStyle || 'form',
+            pageSize: raw.pageSize || 10,
+            sortField: raw.sortField || '',
+            sortDir: raw.sortDir || 'asc'
         };
+    }
+
+    _detectUiType(field, tableName) {
+        if (field.uiType) return field.uiType;
+        const raw = (field.rawType || field.type || '').toUpperCase();
+        const name = field.name.toLowerCase();
+        if (field.fk) return 'fk-select';
+        if (/^BOOLEAN|BOOL|BIT$/.test(raw)) return 'checkbox';
+        if (/^DATE|DATETIME|TIMESTAMP$/.test(raw)) return 'date';
+        if (raw === 'TIME') return 'time';
+        if (raw === 'YEAR') return 'number';
+        if (name.includes('email')) return 'email';
+        if (name.includes('pass')) return 'password';
+        if (name.includes('url') || name.includes('website') || name.includes('site')) return 'url';
+        if (name.includes('phone') || name.includes('tel') || name.includes('mobile')) return 'tel';
+        if (name.includes('color') || name.includes('colour')) return 'color';
+        if (name.includes('desc') || name.includes('bio') || name.includes('notes') || name.includes('details') || name.includes('comment')) return 'textarea';
+        if (field.type === 'INTEGER' || field.type === 'REAL') return 'number';
+        return 'text';
     }
 
     getStatField(tableName) {
@@ -105,8 +127,7 @@ class CodeGenerator {
         routes += `// GET all ${tableName}\n`;
         routes += `app.get('${listRoute}', (req, res) => {\n`;
         routes += `  try {\n`;
-        routes += `    const rows = ${varPrefix}GetAll.all();\n`;
-        routes += `    res.json(rows);\n`;
+        routes += `    res.json(${varPrefix}GetAll.all());\n`;
         routes += `  } catch (err) {\n`;
         routes += `    res.status(500).json({ error: err.message });\n`;
         routes += `  }\n`;
@@ -194,23 +215,31 @@ class CodeGenerator {
         const inactiveVal = statField ? s.statusInactiveValue : '';
         const showDelete = statField && s.showDeleteButton;
 
-        const headerCells = fields.map(f => `<th>${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('');
+        const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n        ');
         const cellRenderers = fields.map(f => {
-            if (statField && f.name === statField.name) {
-                return `<td>\${i.${f.name} === '${activeVal}' ? '<span class="status-badge status-active">${activeVal.charAt(0).toUpperCase() + activeVal.slice(1)}</span>' : (i.${f.name} === '${inactiveVal}' ? '<span class="status-badge status-inactive">${inactiveVal.charAt(0).toUpperCase() + inactiveVal.slice(1)}</span>' : i.${f.name})}</td>`;
-            }
-            return `<td>\${i.${f.name}}</td>`;
-        }).join('');
+            return `<td data-field="${f.name}">\${item.${f.name}}</td>`;
+        }).join('\n          ');
 
         let html = `<h2>${tableName}</h2>\n`;
-        html += `<style>.status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}.status-active{background:#1b5e20;color:#a5d6a7}.status-inactive{background:#b71c1c;color:#ef9a9a}<\/style>\n`;
-        html += `<div id="${tableName.toLowerCase()}List">Loading...</div>\n\n`;
+        html += `<div style="display:flex;align-items:center;gap:8px;">\n`;
+        html += `  <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)" style="flex:1;">\n`;
+        html += `  <div style="position:relative;">\n`;
+        html += `    <button type="button" onclick="toggleColMenu${tableName}()">Columns</button>\n`;
+        html += `    <div id="colMenu${tableName}" style="display:none;position:absolute;right:0;z-index:10;">\n`;
+        for (const f of fields) {
+            html += `      <label><input type="checkbox" data-field="${f.name}" checked onchange="toggleCol${tableName}('${f.name}', this.checked)"> ${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</label>\n`;
+        }
+        html += `      <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol${tableName}('__actions__', this.checked)"> Actions</label>\n`;
+        html += `    </div>\n`;
+        html += `  </div>\n`;
+        html += `</div>\n`;
+        html += `<div id="${tableName.toLowerCase()}List">Loading...</div>\n`;
+        html += `<div id="pagination${tableName}" style="display:flex;align-items:center;justify-content:center;gap:4px;"></div>\n\n`;
 
-        // Modal edit overlay
         if (s.editStyle === 'modal') {
-            html += `<div id="${tableName.toLowerCase()}EditModal" class="modal-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">\n`;
-            html += `  <div class="modal-content" style="background:#fff;max-width:500px;margin:auto;padding:24px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">\n`;
-            html += `    <h3 style="margin:0 0 16px;">Edit ${tableName}</h3>\n`;
+            html += `<div id="${tableName.toLowerCase()}EditModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:1000;align-items:center;justify-content:center;">\n`;
+            html += `  <div style="max-width:500px;width:90%;">\n`;
+            html += `    <h3>Edit ${tableName}</h3>\n`;
             html += `    <form id="${tableName.toLowerCase()}EditForm">\n`;
             for (const f of fields) {
                 const label = f.name.charAt(0).toUpperCase() + f.name.slice(1);
@@ -220,119 +249,252 @@ class CodeGenerator {
                     const active = s.statusActiveValue;
                     const inactive = s.statusInactiveValue;
                     if (s.statusUiStyle === 'radio') {
-                        html += `      <div style="margin-bottom:8px;"><label>${label}</label><br>\n`;
-                        html += `        <label style="margin-right:12px;"><input type="radio" name="${f.name}" value="${active}" /> ${active.charAt(0).toUpperCase() + active.slice(1)}</label>\n`;
+                        html += `      <div><label>${label}</label><br>\n`;
+                        html += `        <label><input type="radio" name="${f.name}" value="${active}" /> ${active.charAt(0).toUpperCase() + active.slice(1)}</label>\n`;
                         html += `        <label><input type="radio" name="${f.name}" value="${inactive}" /> ${inactive.charAt(0).toUpperCase() + inactive.slice(1)}</label>\n`;
                         html += `      </div>\n`;
                     } else if (s.statusUiStyle === 'dropdown') {
-                        html += `      <select name="${f.name}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;">\n`;
+                        html += `      <select name="${f.name}"${required}>\n`;
                         html += `        <option value="${active}">${active.charAt(0).toUpperCase() + active.slice(1)}</option>\n`;
                         html += `        <option value="${inactive}">${inactive.charAt(0).toUpperCase() + inactive.slice(1)}</option>\n`;
                         html += `      </select><br>\n`;
                     } else if (s.statusUiStyle === 'toggle') {
-                        html += `      <div style="margin-bottom:8px;"><label>${label}</label><br>\n`;
-                        html += `        <label class="switch" style="position:relative;display:inline-block;width:44px;height:24px;">\n`;
+                        html += `      <div><label>${label}</label><br>\n`;
+                        html += `        <label>\n`;
                         html += `          <input type="checkbox" name="${f.name}" value="${active}" onchange="this.value=this.checked?'${active}':'${inactive}'">\n`;
-                        html += `          <span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:24px;transition:.3s;"></span>\n`;
+                        html += `          <span></span>\n`;
                         html += `        </label>\n`;
-                        html += `        <span id="m${f.name}Label" style="margin-left:8px;font-size:13px;">${active.charAt(0).toUpperCase() + active.slice(1)}</span>\n`;
+                        html += `        <span id="m${f.name}Label">${active.charAt(0).toUpperCase() + active.slice(1)}</span>\n`;
                         html += `        <script>document.querySelector('#${tableName.toLowerCase()}EditForm [name="${f.name}"]').addEventListener('change',function(){document.getElementById('m${f.name}Label').textContent=this.checked?'${active.charAt(0).toUpperCase() + active.slice(1)}':'${inactive.charAt(0).toUpperCase() + inactive.slice(1)}';})<\/script>\n`;
                         html += `      </div>\n`;
                     } else {
-                        html += `      <input name="${f.name}" style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"${required}><br>\n`;
+                        html += `      <input name="${f.name}"${required}><br>\n`;
                     }
-                } else if (f.fk) {
-                    html += `      <select name="${f.name}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;">\n`;
-                    html += `        <option value="">Select ${f.fk.table}</option>\n`;
-                    html += `      </select><br>\n`;
-                } else if (f.type === 'TEXT' && (f.name.toLowerCase().includes('desc') || f.name.toLowerCase().includes('description'))) {
-                    html += `      <textarea name="${f.name}" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;min-height:60px;"></textarea><br>\n`;
-                } else if (f.type === 'REAL' || f.type === 'INTEGER') {
-                    html += `      <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
                 } else {
-                    html += `      <input name="${f.name}" placeholder="${label}"${required} style="width:100%;margin-bottom:8px;padding:6px 10px;font-size:14px;"><br>\n`;
+                    const uiType = this._detectUiType(f, tableName);
+                    if (uiType === 'fk-select') {
+                        html += `      <select name="${f.name}" id="${tableName.toLowerCase()}_${f.name}"${required}>\n`;
+                        html += `        <option value="">Select ${f.fk.table}</option>\n`;
+                        html += `      </select><br>\n`;
+                    } else if (uiType === 'checkbox') {
+                        html += `      <label><input type="checkbox" name="${f.name}" value="1"${required}> ${label}</label>\n`;
+                    } else if (uiType === 'textarea') {
+                        html += `      <textarea name="${f.name}" placeholder="${label}"${required}></textarea><br>\n`;
+                    } else if (uiType === 'date') {
+                        html += `      <input name="${f.name}" type="date"${required}><br>\n`;
+                    } else if (uiType === 'time') {
+                        html += `      <input name="${f.name}" type="time"${required}><br>\n`;
+                    } else if (uiType === 'email') {
+                        html += `      <input name="${f.name}" type="email" placeholder="${label}"${required}><br>\n`;
+                    } else if (uiType === 'password') {
+                        html += `      <input name="${f.name}" type="password" placeholder="${label}"${required}><br>\n`;
+                    } else if (uiType === 'url') {
+                        html += `      <input name="${f.name}" type="url" placeholder="${label}"${required}><br>\n`;
+                    } else if (uiType === 'tel') {
+                        html += `      <input name="${f.name}" type="tel" placeholder="${label}"${required}><br>\n`;
+                    } else if (uiType === 'color') {
+                        html += `      <input name="${f.name}" type="color"${required}><br>\n`;
+                    } else if (uiType === 'hidden') {
+                        html += `      <input name="${f.name}" type="hidden">\n`;
+                    } else if (uiType === 'number') {
+                        html += `      <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required}><br>\n`;
+                    } else {
+                        html += `      <input name="${f.name}" type="text" placeholder="${label}"${required}><br>\n`;
+                    }
                 }
             }
             html += `      <div style="display:flex;gap:8px;margin-top:12px;">\n`;
-            html += `        <button type="submit" style="padding:8px 16px;background:#0078d4;color:#fff;border:none;border-radius:4px;cursor:pointer;">Save Changes</button>\n`;
-            html += `        <button type="button" onclick="close${tableName}EditModal()" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:4px;cursor:pointer;">Cancel</button>\n`;
+            html += `        <button type="submit">Save Changes</button>\n`;
+            html += `        <button type="button" onclick="close${tableName}EditModal()">Cancel</button>\n`;
             html += `      </div>\n`;
             html += `    </form>\n`;
             html += `  </div>\n`;
             html += `</div>\n\n`;
+
+            // Inline FK fetch for modal selects
+            const fkFields = fields.filter(f => f.fk);
+            for (const f of fkFields) {
+                html += `<script>\n`;
+                html += `(async function load${f.fk.table}() {\n`;
+                html += `  try {\n`;
+                html += `    const res = await fetch('/api/${f.fk.table.toLowerCase()}');\n`;
+                html += `    const data = await res.json();\n`;
+                html += `    const sel = document.getElementById('${tableName.toLowerCase()}_${f.name}');\n`;
+                html += `    if (!sel) return;\n`;
+                html += `    data.forEach(function(item) {\n`;
+                html += `      const opt = document.createElement('option');\n`;
+                html += `      opt.value = item.${this.getPK(f.fk.table)};\n`;
+                html += `      opt.textContent = Object.values(item).filter(v => v != null).join(' - ');\n`;
+                html += `      sel.appendChild(opt);\n`;
+                html += `    });\n`;
+                html += `  } catch(e) { console.error('Failed to load ${f.fk.table}', e); }\n`;
+                html += `})();\n`;
+                html += `<\/script>\n`;
+            }
         }
 
         html += `<script>\n`;
         html += `  const API = '${api}';\n`;
+        html += `  var data = [];\n`;
+        html += `  var currentPage = 1;\n`;
+        html += `  var searchQuery = '';\n`;
+        html += `  var sortField = '${s.sortField}';\n`;
+        html += `  var sortDir = '${s.sortDir || 'asc'}';\n`;
+        html += `  var pageSize = ${s.pageSize || 10};\n\n`;
         html += `  async function load${tableName}() {\n`;
-        html += `    const res = await fetch(API);\n`;
-        html += `    const items = await res.json();\n`;
-        html += `    const list = document.getElementById('${tableName.toLowerCase()}List');\n`;
-        html += `    if (!items.length) { list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>'; return; }\n`;
-        html += `    list.innerHTML = \`<table><tr>${headerCells}<th>Actions</th></tr>\n`;
-        html += `      \${items.map(i => \`<tr>${cellRenderers}`;
-        html += `<td><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> `;
-        if (showDelete) {
-            html += `<button onclick="deactivate${tableName}(\${i.${pk}})" class="del-btn">Deactivate</button> `;
-            html += `<button onclick="hardDelete${tableName}(\${i.${pk}})" class="del-btn" style="background:#b71c1c;">Delete</button></td></tr>\`).join('')}</table>\`;\n`;
-        } else {
-            html += `<button onclick="${actionFunc}${tableName}(\${i.${pk}})" class="del-btn">${actionLabel}</button></td></tr>\`).join('')}</table>\`;\n`;
-        }
+        html += `    var response = await fetch(API);\n`;
+        html += `    data = await response.json();\n`;
+        html += `    currentPage = 1;\n`;
+        html += `    searchQuery = '';\n`;
+        html += `    var searchEl = document.getElementById('search${tableName}');\n`;
+        html += `    if (searchEl) {\n`;
+        html += `      searchEl.value = '';\n`;
+        html += `    }\n`;
+        html += `    render${tableName}();\n`;
         html += `  }\n\n`;
+        html += `  function render${tableName}() {\n`;
+        html += `    var items = data.slice();\n\n`;
+        html += `    // Search filter\n`;
+        html += `    if (searchQuery) {\n`;
+        html += `      var q = searchQuery.toLowerCase();\n`;
+        html += `      items = items.filter(function(item) {\n`;
+        html += `        return Object.values(item).some(function(value) {\n`;
+        html += `          return String(value).toLowerCase().includes(q);\n`;
+        html += `        });\n`;
+        html += `      });\n`;
+        html += `    }\n\n`;
+        html += `    // Sort\n`;
+        html += `    if (sortField) {\n`;
+        html += `      items.sort(function(a, b) {\n`;
+        html += `        var va = a[sortField];\n`;
+        html += `        var vb = b[sortField];\n`;
+        html += `        if (va == null) va = '';\n`;
+        html += `        if (vb == null) vb = '';\n`;
+        html += `        if (typeof va === 'number') {\n`;
+        html += `          return sortDir === 'asc' ? va - vb : vb - va;\n`;
+        html += `        }\n`;
+        html += `        var result = String(va).toLowerCase().localeCompare(String(vb).toLowerCase());\n`;
+        html += `        return sortDir === 'asc' ? result : -result;\n`;
+        html += `      });\n`;
+        html += `    }\n\n`;
+        html += `    var total = items.length;\n`;
+        html += `    var totalPages = Math.ceil(total / pageSize) || 1;\n`;
+        html += `    if (currentPage > totalPages) {\n`;
+        html += `      currentPage = totalPages;\n`;
+        html += `    }\n\n`;
+        html += `    var list = document.getElementById('${tableName.toLowerCase()}List');\n\n`;
+        html += `    // Empty state\n`;
+        html += `    if (total === 0) {\n`;
+        html += `      list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>';\n`;
+        html += `      document.getElementById('pagination${tableName}').innerHTML = '';\n`;
+        html += `      return;\n`;
+        html += `    }\n\n`;
+        html += `    var pageItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);\n\n`;
+        html += `    // Render table\n`;
+        html += `    list.innerHTML = \`<table>\n`;
+        html += `      <tr>\n`;
+        html += `        ${headerCells}\n`;
+        html += `        <th data-field="__actions__">Actions</th>\n`;
+        html += `      </tr>\n`;
+        html += `      \${pageItems.map(function(item) {\n`;
+        html += `        return \`<tr>\n`;
+        html += `          ${cellRenderers}`;
+        if (showDelete) {
+            html += `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button> <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button></td>\n        `;
+        } else {
+            html += `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button></td>\n        `;
+        }
+        html += `\`;\n`;
+        html += `      }).join('')}\n`;
+        html += `    </table>\`;\n\n`;
+        html += `    // Pagination controls\n`;
+        html += `    var p = '';\n`;
+        html += `    p += '<button onclick="goToPage${tableName}(1)">&laquo;</button>';\n`;
+        html += `    p += '<button onclick="goToPage${tableName}(' + (currentPage - 1) + ')"';\n`;
+        html += `    if (currentPage <= 1) p += ' disabled';\n`;
+        html += `    p += '>&lsaquo;</button>';\n`;
+        html += `    p += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + total + ')</span>';\n`;
+        html += `    p += '<button onclick="goToPage${tableName}(' + (currentPage + 1) + ')"';\n`;
+        html += `    if (currentPage >= totalPages) p += ' disabled';\n`;
+        html += `    p += '>&rsaquo;</button>';\n`;
+        html += `    p += '<button onclick="goToPage${tableName}(' + totalPages + ')">&raquo;</button>';\n`;
+        html += `    document.getElementById('pagination${tableName}').innerHTML = p;\n`;
+        html += `  }\n\n`;
+        html += `  function search${tableName}(query) {\n`;
+        html += `    searchQuery = query;\n`;
+        html += `    currentPage = 1;\n`;
+        html += `    render${tableName}();\n`;
+        html += `  }\n\n`;
+        html += `  function sort${tableName}(field) {\n`;
+        html += `    if (sortField === field) {\n`;
+        html += `      sortDir = sortDir === 'asc' ? 'desc' : 'asc';\n`;
+        html += `    } else {\n`;
+        html += `      sortField = field;\n`;
+        html += `      sortDir = 'asc';\n`;
+        html += `    }\n`;
+        html += `    render${tableName}();\n`;
+        html += `  }\n\n`;
+        html += `  function goToPage${tableName}(page) {\n`;
+        html += `    if (page < 1 || page > Math.ceil(data.length / pageSize)) return;\n`;
+        html += `    currentPage = page;\n`;
+        html += `    render${tableName}();\n`;
+        html += `  }\n\n`;
+        html += `  function toggleCol${tableName}(field, show) {\n`;
+        html += `    var cells = document.querySelectorAll('#${tableName.toLowerCase()}List [data-field="' + field + '"]');\n`;
+        html += `    cells.forEach(function(el) { el.style.display = show ? '' : 'none'; });\n`;
+        html += `  }\n\n`;
+        html += `  function toggleColMenu${tableName}() {\n`;
+        html += `    var menu = document.getElementById('colMenu${tableName}');\n`;
+        html += `    menu.style.display = menu.style.display === 'none' ? '' : 'none';\n`;
+        html += `  }\n`;
+        html += `  document.addEventListener('click', function(e) {\n`;
+        html += `    var menu = document.getElementById('colMenu${tableName}');\n`;
+        html += `    if (!e.target.closest('#colMenu${tableName}, [onclick*="toggleColMenu${tableName}"]')) {\n`;
+        html += `      menu.style.display = 'none';\n`;
+        html += `    }\n`;
+        html += `  });\n\n`;
 
         if (s.editStyle === 'modal') {
-            html += `  let edit${tableName}Id = null;\n\n`;
+            const mid = tableName.toLowerCase() + 'EditModal';
+            const mf = tableName.toLowerCase() + 'EditForm';
+            html += `  var eid = null;\n\n`;
             html += `  async function edit${tableName}(id) {\n`;
-            html += `    edit${tableName}Id = id;\n`;
+            html += `    eid = id;\n`;
             html += `    try {\n`;
-            html += `      const res = await fetch(\`\${API}/\${id}\`);\n`;
-            html += `      if (!res.ok) throw new Error('Fetch failed');\n`;
-            html += `      const row = await res.json();\n`;
+            html += `      var row = await (await fetch(API + '/' + id)).json();\n`;
             for (const f of fields) {
+                const q = `'#${mf} [name="${f.name}"]'`;
                 const isStatus = this._isStatusField(tableName, f.name);
+                const uiType = this._detectUiType(f, tableName);
                 if (isStatus && s.statusUiStyle === 'radio') {
-                    html += `      document.querySelectorAll('#${tableName.toLowerCase()}EditForm [name="${f.name}"]').forEach(function(rb) { rb.checked = (rb.value === row.${f.name}); });\n`;
+                    html += `      document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
-                    html += `      var cb = document.querySelector('#${tableName.toLowerCase()}EditForm [name="${f.name}"]'); if (cb) { cb.checked = (row.${f.name} === cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                    html += `      var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                } else if (uiType === 'checkbox') {
+                    html += `      var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == 1 || row.${f.name} === true); }\n`;
                 } else {
-                    html += `      var el = document.querySelector('#${tableName.toLowerCase()}EditForm [name="${f.name}"]'); if (el) el.value = row.${f.name} != null ? row.${f.name} : '';\n`;
+                    html += `      var el = document.querySelector(${q}); if (el) { el.value = row.${f.name} ?? ''; }\n`;
                 }
             }
-            html += `      document.getElementById('${tableName.toLowerCase()}EditModal').style.display = 'flex';\n`;
+            html += `      document.getElementById('${mid}').style.display = 'flex';\n`;
             html += `    } catch (err) { alert('Error: ' + err.message); }\n`;
             html += `  }\n\n`;
-            html += `  function close${tableName}EditModal() {\n`;
-            html += `    document.getElementById('${tableName.toLowerCase()}EditModal').style.display = 'none';\n`;
-            html += `    edit${tableName}Id = null;\n`;
-            html += `  }\n\n`;
-            html += `  document.getElementById('${tableName.toLowerCase()}EditForm').onsubmit = async function(e) {\n`;
+            html += `  function close${tableName}EditModal() { document.getElementById('${mid}').style.display = 'none'; eid = null; }\n\n`;
+            html += `  document.getElementById('${mf}').onsubmit = async function(e) {\n`;
             html += `    e.preventDefault();\n`;
-            html += `    const data = Object.fromEntries(new FormData(e.target));\n`;
+            html += `    var d = Object.fromEntries(new FormData(e.target));\n`;
+            html += `    document.querySelectorAll('#${mf} input[type=checkbox]:not(:checked)').forEach(function(c) { d[c.name] = '0'; });\n`;
             html += `    try {\n`;
-            html += `      await fetch(\`\${API}/\${edit${tableName}Id}\`, {\n`;
-            html += `        method: '${s.editMode.toUpperCase()}',\n`;
-            html += `        headers: { 'Content-Type': 'application/json' },\n`;
-            html += `        body: JSON.stringify(data)\n`;
-            html += `      });\n`;
-            html += `      close${tableName}EditModal();\n`;
-            html += `      load${tableName}();\n`;
+            html += `      await fetch(API + '/' + eid, { method: '${s.editMode.toUpperCase()}', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
+            html += `      close${tableName}EditModal(); load${tableName}();\n`;
             html += `    } catch (err) { alert('Error: ' + err.message); }\n`;
             html += `  };\n\n`;
         }
 
-        // Default deactivate/delete function
-        html += `  async function ${actionFunc}${tableName}(id) {\n`;
-        html += `    if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return;\n`;
-        html += `    await fetch(\`\${API}/\${id}\`, { method: 'DELETE' });\n`;
-        html += `    load${tableName}();\n`;
-        html += `  }\n\n`;
+        html += `  async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
 
         if (showDelete) {
-            html += `  async function hardDelete${tableName}(id) {\n`;
-            html += `    if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return;\n`;
-            html += `    await fetch(\`\${API}/\${id}/delete\`, { method: 'POST' });\n`;
-            html += `    load${tableName}();\n`;
-            html += `  }\n\n`;
+            html += `  async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
         }
 
         html += `  load${tableName}();\n`;
@@ -358,8 +520,8 @@ class CodeGenerator {
                 const active = s.statusActiveValue;
                 const inactive = s.statusInactiveValue;
                 if (s.statusUiStyle === 'radio') {
-                    html += `  <div style="margin-bottom:8px;"><label>${label}</label><br>\n`;
-                    html += `    <label style="margin-right:12px;"><input type="radio" name="${f.name}" value="${active}" checked /> ${active.charAt(0).toUpperCase() + active.slice(1)}</label>\n`;
+                    html += `  <div><label>${label}</label><br>\n`;
+                    html += `    <label><input type="radio" name="${f.name}" value="${active}" checked /> ${active.charAt(0).toUpperCase() + active.slice(1)}</label>\n`;
                     html += `    <label><input type="radio" name="${f.name}" value="${inactive}" /> ${inactive.charAt(0).toUpperCase() + inactive.slice(1)}</label>\n`;
                     html += `  </div>\n`;
                 } else if (s.statusUiStyle === 'dropdown') {
@@ -368,31 +530,73 @@ class CodeGenerator {
                     html += `    <option value="${inactive}">${inactive.charAt(0).toUpperCase() + inactive.slice(1)}</option>\n`;
                     html += `  </select><br>\n`;
                 } else if (s.statusUiStyle === 'toggle') {
-                    html += `  <div style="margin-bottom:8px;"><label>${label}</label><br>\n`;
-                    html += `    <label class="switch" style="position:relative;display:inline-block;width:44px;height:24px;">\n`;
+                    html += `  <div><label>${label}</label><br>\n`;
+                    html += `    <label>\n`;
                     html += `      <input type="checkbox" name="${f.name}" value="${active}" onchange="this.value=this.checked?'${active}':'${inactive}'" checked>\n`;
-                    html += `      <span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:24px;transition:.3s;"></span>\n`;
+                    html += `      <span></span>\n`;
                     html += `    </label>\n`;
-                    html += `    <span id="${f.name}Label" style="margin-left:8px;font-size:13px;">${active.charAt(0).toUpperCase() + active.slice(1)}</span>\n`;
+                    html += `    <span id="${f.name}Label">${active.charAt(0).toUpperCase() + active.slice(1)}</span>\n`;
                     html += `    <script>document.querySelector('[name="${f.name}"]').addEventListener('change',function(){document.getElementById('${f.name}Label').textContent=this.checked?'${active.charAt(0).toUpperCase() + active.slice(1)}':'${inactive.charAt(0).toUpperCase() + inactive.slice(1)}';})<\/script>\n`;
                     html += `  </div>\n`;
                 } else {
                     html += `  <input name="${f.name}" value="${active}"${required}><br>\n`;
                 }
-            } else if (f.fk) {
-                html += `  <select name="${f.name}"${required}>\n`;
-                html += `    <option value="">Select ${f.fk.table}</option>\n`;
-                html += `  </select><br>\n`;
-            } else if (f.type === 'TEXT' && (f.name.toLowerCase().includes('desc') || f.name.toLowerCase().includes('description'))) {
-                html += `  <textarea name="${f.name}" placeholder="${label}"${required}>${f.default || ''}</textarea><br>\n`;
-            } else if (f.type === 'REAL' || f.type === 'INTEGER') {
-                html += `  <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required}${defVal}><br>\n`;
             } else {
-                html += `  <input name="${f.name}" placeholder="${label}"${required}${defVal}><br>\n`;
+                const uiType = this._detectUiType(f, tableName);
+                if (uiType === 'fk-select') {
+                    html += `  <select name="${f.name}" id="${tableName.toLowerCase()}_${f.name}"${required}>\n`;
+                    html += `    <option value="">Select ${f.fk.table}</option>\n`;
+                    html += `  </select><br>\n`;
+                } else if (uiType === 'checkbox') {
+                    html += `  <label><input type="checkbox" name="${f.name}" value="1"> ${label}</label><br>\n`;
+                } else if (uiType === 'textarea') {
+                    html += `  <textarea name="${f.name}" placeholder="${label}"${required}>${f.default || ''}</textarea><br>\n`;
+                } else if (uiType === 'date') {
+                    html += `  <input name="${f.name}" type="date"${required}${defVal}><br>\n`;
+                } else if (uiType === 'time') {
+                    html += `  <input name="${f.name}" type="time"${required}${defVal}><br>\n`;
+                } else if (uiType === 'email') {
+                    html += `  <input name="${f.name}" type="email" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'password') {
+                    html += `  <input name="${f.name}" type="password" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'url') {
+                    html += `  <input name="${f.name}" type="url" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'tel') {
+                    html += `  <input name="${f.name}" type="tel" placeholder="${label}"${required}${defVal}><br>\n`;
+                } else if (uiType === 'color') {
+                    html += `  <input name="${f.name}" type="color"${required}${defVal}><br>\n`;
+                } else if (uiType === 'hidden') {
+                    html += `  <input name="${f.name}" type="hidden">\n`;
+                } else if (uiType === 'number') {
+                    html += `  <input name="${f.name}" type="number"${f.type === 'REAL' ? ' step="any"' : ''} placeholder="${label}"${required}${defVal}><br>\n`;
+                } else {
+                    html += `  <input name="${f.name}" type="text" placeholder="${label}"${required}${defVal}><br>\n`;
+                }
             }
         }
         html += `  <button type="submit">Add</button>\n`;
         html += `</form>\n`;
+
+        // Inline FK fetch for form selects
+        for (const f of fields) {
+            if (!f.fk) continue;
+            html += `<script>\n`;
+            html += `(async function load${f.fk.table}() {\n`;
+            html += `  try {\n`;
+            html += `    const res = await fetch('/api/${f.fk.table.toLowerCase()}');\n`;
+            html += `    const data = await res.json();\n`;
+            html += `    const sel = document.getElementById('${tableName.toLowerCase()}_${f.name}');\n`;
+            html += `    if (!sel) return;\n`;
+            html += `    data.forEach(function(item) {\n`;
+            html += `      const opt = document.createElement('option');\n`;
+            html += `      opt.value = item.${this.getPK(f.fk.table)};\n`;
+            html += `      opt.textContent = Object.values(item).filter(v => v != null).join(' - ');\n`;
+            html += `      sel.appendChild(opt);\n`;
+            html += `    });\n`;
+            html += `  } catch(e) { console.error('Failed to load ${f.fk.table}', e); }\n`;
+            html += `})();\n`;
+            html += `<\/script>\n`;
+        }
         return html;
     }
 
@@ -404,66 +608,49 @@ class CodeGenerator {
         const api = `/api/${tableName.toLowerCase()}`;
         const editMode = this._getEditMode(tableName);
         const s = this._getFullSettings(tableName);
-
         const isModalEdit = s.editStyle === 'modal';
+        const fn = tableName.toLowerCase() + 'Form';
+        const lf = 'load' + tableName;
 
-        let js = `let edit${tableName}Id = null;\n\n`;
-        js += `document.getElementById('${tableName.toLowerCase()}Form').onsubmit = async (e) => {\n`;
+        let js = `var eid = null;\n\n`;
+        js += `document.getElementById('${fn}').onsubmit = async function(e) {\n`;
         js += `  e.preventDefault();\n`;
-        js += `  const fd = new FormData(e.target);\n`;
-        js += `  const data = Object.fromEntries(fd);\n`;
+        js += `  var d = Object.fromEntries(new FormData(e.target));\n`;
+        js += `  e.target.querySelectorAll('input[type=checkbox]:not(:checked)').forEach(function(c) { d[c.name] = '0'; });\n`;
         if (isModalEdit) {
-            js += `  await fetch('${api}', {\n`;
-            js += `    method: 'POST',\n`;
-            js += `    headers: { 'Content-Type': 'application/json' },\n`;
-            js += `    body: JSON.stringify(data)\n`;
-            js += `  });\n`;
+            js += `  await fetch('${api}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
         } else {
-            js += `  if (edit${tableName}Id) {\n`;
-            js += `    await fetch(\`${api}/\${edit${tableName}Id}\`, {\n`;
-            js += `      method: '${editMode.toUpperCase()}',\n`;
-            js += `      headers: { 'Content-Type': 'application/json' },\n`;
-            js += `      body: JSON.stringify(data)\n`;
-            js += `    });\n`;
-            js += `    edit${tableName}Id = null;\n`;
-            js += `  } else {\n`;
-            js += `    await fetch('${api}', {\n`;
-            js += `      method: 'POST',\n`;
-            js += `      headers: { 'Content-Type': 'application/json' },\n`;
-            js += `      body: JSON.stringify(data)\n`;
-            js += `    });\n`;
-            js += `  }\n`;
+            js += `  var url = eid ? '${api}/' + eid : '${api}';\n`;
+            js += `  var method = eid ? '${editMode.toUpperCase()}' : 'POST';\n`;
+            js += `  await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
+            js += `  eid = null;\n`;
         }
         js += `  e.target.reset();\n`;
-        js += `  if (typeof load${tableName} === 'function') load${tableName}();\n`;
+        js += `  if (typeof ${lf} === 'function') ${lf}();\n`;
         js += `};\n\n`;
 
         if (isModalEdit) {
-            js += `async function edit${tableName}(id) {\n`;
-            js += `  if (typeof open${tableName}EditModal === 'function') {\n`;
-            js += `    open${tableName}EditModal(id);\n`;
-            js += `  }\n`;
-            js += `}\n`;
+            js += `async function edit${tableName}(id) { if (typeof open${tableName}EditModal === 'function') open${tableName}EditModal(id); }\n`;
         } else {
             js += `async function edit${tableName}(id) {\n`;
             js += `  try {\n`;
-            js += `    const res = await fetch(\`\${API}/\${id}\`);\n`;
-            js += `    if (!res.ok) throw new Error('Failed to fetch');\n`;
-            js += `    const row = await res.json();\n`;
-            js += `    edit${tableName}Id = id;\n`;
+            js += `    var row = await (await fetch(API + '/' + id)).json();\n`;
             for (const f of fields) {
+                const q = `'[name="${f.name}"]'`;
                 const isStatus = this._isStatusField(tableName, f.name);
+                const uiType = this._detectUiType(f, tableName);
                 if (isStatus && s.statusUiStyle === 'radio') {
-                    js += `    document.querySelectorAll('[name="${f.name}"]').forEach(function(rb) { rb.checked = (rb.value === row.${f.name}); });\n`;
+                    js += `    document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
-                    js += `    var cb = document.querySelector('[name="${f.name}"]'); if (cb) { cb.checked = (row.${f.name} === cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                    js += `    var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
+                } else if (uiType === 'checkbox') {
+                    js += `    var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == 1 || row.${f.name} === true); }\n`;
                 } else {
-                    js += `    document.querySelector('[name="${f.name}"]').value = row.${f.name} != null ? row.${f.name} : '';\n`;
+                    js += `    var el = document.querySelector(${q}); if (el) { el.value = row.${f.name} ?? ''; }\n`;
                 }
             }
-            js += `  } catch (err) {\n`;
-            js += `    alert('Error: ' + err.message);\n`;
-            js += `  }\n`;
+            js += `    eid = id;\n`;
+            js += `  } catch (err) { alert('Error: ' + err.message); }\n`;
             js += `}\n`;
         }
         return js;
@@ -479,47 +666,135 @@ class CodeGenerator {
         const s = this._getFullSettings(tableName);
         const actionLabel = statField ? 'Deactivate' : 'Delete';
         const actionFunc = statField ? 'deactivate' : 'delete';
-        const activeVal = statField ? s.statusActiveValue : '';
-        const inactiveVal = statField ? s.statusInactiveValue : '';
         const showDelete = statField && s.showDeleteButton;
 
-        const headerCells = fields.map(f => `<th>${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('');
-        const cellRenderers = fields.map(f => {
-            if (statField && f.name === statField.name) {
-                return `<td>\${i.${f.name} === '${activeVal}' ? '<span class="status-badge status-active">${activeVal.charAt(0).toUpperCase() + activeVal.slice(1)}</span>' : (i.${f.name} === '${inactiveVal}' ? '<span class="status-badge status-inactive">${inactiveVal.charAt(0).toUpperCase() + inactiveVal.slice(1)}</span>' : i.${f.name})}</td>`;
-            }
-            return `<td>\${i.${f.name}}</td>`;
-        }).join('');
+        const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n      ');
+        const cellRenderers = fields.map(f => `<td data-field="${f.name}">\${item.${f.name}}</td>`).join('\n        ');
 
-        let js = `const API = '${api}';\n\n`;
+        const lid = tableName.toLowerCase() + 'List';
+        const pid = 'pagination' + tableName;
+
+        let js = `const API = '${api}';\n`;
+        js += `var data = [];\n`;
+        js += `var currentPage = 1;\n`;
+        js += `var searchQuery = '';\n`;
+        js += `var sortField = '${s.sortField}';\n`;
+        js += `var sortDir = '${s.sortDir || 'asc'}';\n`;
+        js += `var pageSize = ${s.pageSize || 10};\n\n`;
+        js += `/* Required HTML:\n`;
+        js += `   <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)">\n`;
+        js += `   <div id="${lid}">Loading...</div>\n`;
+        js += `   <div id="${pid}" style="display:flex;align-items:center;justify-content:center;gap:4px;"></div>\n`;
+        js += `*/\n\n`;
         js += `async function load${tableName}() {\n`;
-        js += `  const res = await fetch(API);\n`;
-        js += `  const items = await res.json();\n`;
-        js += `  const list = document.getElementById('${tableName.toLowerCase()}List');\n`;
-        js += `  if (!items.length) { list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>'; return; }\n`;
-        js += `  list.innerHTML = \`<table><tr>${headerCells}<th>Actions</th></tr>\n`;
-        js += `    \${items.map(i => \`<tr>${cellRenderers}`;
+        js += `  var response = await fetch(API);\n`;
+        js += `  data = await response.json();\n`;
+        js += `  currentPage = 1;\n`;
+        js += `  searchQuery = '';\n`;
+        js += `  var searchEl = document.getElementById('search${tableName}');\n`;
+        js += `  if (searchEl) {\n`;
+        js += `    searchEl.value = '';\n`;
+        js += `  }\n`;
+        js += `  render${tableName}();\n`;
+        js += `}\n\n`;
+        js += `function render${tableName}() {\n`;
+        js += `  var items = data.slice();\n\n`;
+        js += `  // Search filter\n`;
+        js += `  if (searchQuery) {\n`;
+        js += `    var q = searchQuery.toLowerCase();\n`;
+        js += `    items = items.filter(function(item) {\n`;
+        js += `      return Object.values(item).some(function(value) {\n`;
+        js += `        return String(value).toLowerCase().includes(q);\n`;
+        js += `      });\n`;
+        js += `    });\n`;
+        js += `  }\n\n`;
+        js += `  // Sort\n`;
+        js += `  if (sortField) {\n`;
+        js += `    items.sort(function(a, b) {\n`;
+        js += `      var va = a[sortField];\n`;
+        js += `      var vb = b[sortField];\n`;
+        js += `      if (va == null) va = '';\n`;
+        js += `      if (vb == null) vb = '';\n`;
+        js += `      if (typeof va === 'number') {\n`;
+        js += `        return sortDir === 'asc' ? va - vb : vb - va;\n`;
+        js += `      }\n`;
+        js += `      var result = String(va).toLowerCase().localeCompare(String(vb).toLowerCase());\n`;
+        js += `      return sortDir === 'asc' ? result : -result;\n`;
+        js += `    });\n`;
+        js += `  }\n\n`;
+        js += `  var total = items.length;\n`;
+        js += `  var totalPages = Math.ceil(total / pageSize) || 1;\n`;
+        js += `  if (currentPage > totalPages) {\n`;
+        js += `    currentPage = totalPages;\n`;
+        js += `  }\n\n`;
+        js += `  var list = document.getElementById('${lid}');\n\n`;
+        js += `  // Empty state\n`;
+        js += `  if (total === 0) {\n`;
+        js += `    list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>';\n`;
+        js += `    document.getElementById('${pid}').innerHTML = '';\n`;
+        js += `    return;\n`;
+        js += `  }\n\n`;
+        js += `  var pageItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);\n\n`;
+        js += `  // Render table\n`;
+        js += `  list.innerHTML = \`<table>\n`;
+        js += `    <tr>\n`;
+        js += `      ${headerCells}\n`;
+        js += `      <th data-field="__actions__">Actions</th>\n`;
+        js += `    </tr>\n`;
+        js += `    \${pageItems.map(function(item) {\n`;
+        js += `      return \`<tr>\n`;
+        js += `        ${cellRenderers}`;
         if (showDelete) {
-            js += `<td><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="deactivate${tableName}(\${i.${pk}})" class="del-btn">Deactivate</button> <button onclick="hardDelete${tableName}(\${i.${pk}})" class="del-btn" style="background:#b71c1c;">Delete</button></td>\``;
+            js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button> <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button></td>\n      `;
         } else {
-            js += `<td><button onclick="edit${tableName}(\${i.${pk}})" class="edit-btn">Edit</button> <button onclick="${actionFunc}${tableName}(\${i.${pk}})" class="del-btn">${actionLabel}</button></td>\``;
+            js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button></td>\n      `;
         }
-        js += `).join('')}</table>\`;\n`;
+        js += `\`;\n`;
+        js += `    }).join('')}\n`;
+        js += `  </table>\`;\n\n`;
+        js += `  // Pagination controls\n`;
+        js += `  var p = '';\n`;
+        js += `  p += '<button onclick="goToPage${tableName}(1)">&laquo;</button>';\n`;
+        js += `  p += '<button onclick="goToPage${tableName}(' + (currentPage - 1) + ')"';\n`;
+        js += `  if (currentPage <= 1) p += ' disabled';\n`;
+        js += `  p += '>&lsaquo;</button>';\n`;
+        js += `  p += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + total + ')</span>';\n`;
+        js += `  p += '<button onclick="goToPage${tableName}(' + (currentPage + 1) + ')"';\n`;
+        js += `  if (currentPage >= totalPages) p += ' disabled';\n`;
+        js += `  p += '>&rsaquo;</button>';\n`;
+        js += `  p += '<button onclick="goToPage${tableName}(' + totalPages + ')">&raquo;</button>';\n`;
+        js += `  document.getElementById('${pid}').innerHTML = p;\n`;
         js += `}\n\n`;
-        js += `async function ${actionFunc}${tableName}(id) {\n`;
-        js += `  if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return;\n`;
-        js += `  await fetch(\`\${API}/\${id}\`, { method: 'DELETE' });\n`;
-        js += `  load${tableName}();\n`;
+        js += `function search${tableName}(query) {\n`;
+        js += `  searchQuery = query;\n`;
+        js += `  currentPage = 1;\n`;
+        js += `  render${tableName}();\n`;
         js += `}\n\n`;
+        js += `function sort${tableName}(field) {\n`;
+        js += `  if (sortField === field) {\n`;
+        js += `    sortDir = sortDir === 'asc' ? 'desc' : 'asc';\n`;
+        js += `  } else {\n`;
+        js += `    sortField = field;\n`;
+        js += `    sortDir = 'asc';\n`;
+        js += `  }\n`;
+        js += `  render${tableName}();\n`;
+        js += `}\n\n`;
+        js += `function goToPage${tableName}(page) {\n`;
+        js += `  if (page < 1 || page > Math.ceil(data.length / pageSize)) return;\n`;
+        js += `  currentPage = page;\n`;
+        js += `  render${tableName}();\n`;
+        js += `}\n\n`;
+        js += `function toggleCol${tableName}(field, show) {\n`;
+        js += `  var cells = document.querySelectorAll('#${lid} [data-field="' + field + '"]');\n`;
+        js += `  cells.forEach(function(el) {\n`;
+        js += `    el.style.display = show ? '' : 'none';\n`;
+        js += `  });\n`;
+        js += `}\n\n`;
+        js += `async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
         if (showDelete) {
-            js += `async function hardDelete${tableName}(id) {\n`;
-            js += `  if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return;\n`;
-            js += `  await fetch(\`\${API}/\${id}/delete\`, { method: 'POST' });\n`;
-            js += `  load${tableName}();\n`;
-            js += `}\n\n`;
+            js += `async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
         }
         js += `load${tableName}();\n`;
-        js += `// Add this CSS to your page: <style>.status-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}.status-active{background:#1b5e20;color:#a5d6a7}.status-inactive{background:#b71c1c;color:#ef9a9a}<\/style>\n`;
         return js;
     }
 
