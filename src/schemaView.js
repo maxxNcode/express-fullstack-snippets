@@ -2182,6 +2182,7 @@ class SchemaViewProvider {
     }
 
     _handleGetScreens() {
+        if (!this._panel) return;
         const screens = this.schemaRegistry.getScreens();
         const tables = this.schemaRegistry.getTables();
         const tableInfo = {};
@@ -2196,6 +2197,7 @@ class SchemaViewProvider {
     }
 
     async _handleAddScreen(screen) {
+        if (!this._panel) return;
         try {
             await this.schemaRegistry.addScreen(screen);
             this._handleGetScreens();
@@ -2205,6 +2207,7 @@ class SchemaViewProvider {
     }
 
     async _handleRemoveScreen(name) {
+        if (!this._panel) return;
         try {
             await this.schemaRegistry.removeScreen(name);
             this._handleGetScreens();
@@ -2214,6 +2217,7 @@ class SchemaViewProvider {
     }
 
     async _handleUpdateScreen(name, updates) {
+        if (!this._panel) return;
         try {
             await this.schemaRegistry.updateScreen(name, updates);
             this._handleGetScreens();
@@ -2223,6 +2227,7 @@ class SchemaViewProvider {
     }
 
     _handlePreviewScreen(name) {
+        if (!this._panel) return;
         const screen = this.schemaRegistry.getScreen(name);
         if (!screen) {
             this._panel.webview.postMessage({ command: 'screenError', error: `Screen "${name}" not found` });
