@@ -2152,6 +2152,7 @@
                 r.checked = (r.value === (settings.editStyle || 'form'));
             });
             document.getElementById('tsShowDelete').checked = settings.showDeleteButton === true;
+            document.getElementById('tsShowColumnVisibility').checked = settings.showColumnVisibility !== false;
             document.getElementById('tsPageSize').value = settings.pageSize || 10;
             var sortDirRadios = document.querySelectorAll('input[name="tsSortDir"]');
             sortDirRadios.forEach(function(r) {
@@ -2170,6 +2171,7 @@
                 editMode: document.querySelector('input[name="tsEditMode"]:checked').value,
                 editStyle: document.querySelector('input[name="tsEditStyle"]:checked').value,
                 showDeleteButton: document.getElementById('tsShowDelete').checked,
+                showColumnVisibility: document.getElementById('tsShowColumnVisibility').checked,
                 pageSize: parseInt(document.getElementById('tsPageSize').value) || 10,
                 sortField: document.getElementById('tsSortField').value,
                 sortDir: document.querySelector('input[name="tsSortDir"]:checked').value

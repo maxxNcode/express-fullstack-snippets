@@ -751,16 +751,18 @@ class Scaffer {
         html += '      <h2>' + displayName + ' Records</h2>\n';
         html += '      <div class="search-bar">\n';
         html += '        <input type="search" id="searchInput" placeholder="Search records..." oninput="searchRecords(this.value)">\n';
-        html += '        <div style="position:relative;">\n';
-        html += '          <button type="button" class="btn-primary btn-sm" onclick="toggleColMenu()">Columns</button>\n';
-        html += '          <div id="colMenu" class="col-menu">\n';
-        for (const f of fields) {
-            const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            html += '            <label><input type="checkbox" data-field="' + f.name + '" checked onchange="toggleCol(\'' + f.name + '\', this.checked)"> ' + label + '</label>\n';
+        if (s.showColumnVisibility) {
+            html += '        <div style="position:relative;">\n';
+            html += '          <button type="button" class="btn-primary btn-sm" onclick="toggleColMenu()">Columns</button>\n';
+            html += '          <div id="colMenu" class="col-menu">\n';
+            for (const f of fields) {
+                const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                html += '            <label><input type="checkbox" data-field="' + f.name + '" checked onchange="toggleCol(\'' + f.name + '\', this.checked)"> ' + label + '</label>\n';
+            }
+            html += '            <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol(\'__actions__\', this.checked)"> Actions</label>\n';
+            html += '          </div>\n';
+            html += '        </div>\n';
         }
-        html += '            <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol(\'__actions__\', this.checked)"> Actions</label>\n';
-        html += '          </div>\n';
-        html += '        </div>\n';
         html += '      </div>\n';
         html += '      <div id="recordsTable">\n';
         html += '        <p style="color:#888;font-size:13px;">Loading...</p>\n';
@@ -858,7 +860,7 @@ class Scaffer {
         html += "        html += '<td class=\"actions\" data-field=\"__actions__\">';\n";
         html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
         if (hasStat) {
-            html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ';\n";
+            html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(row." + pkName + ")\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ');\n";
             if (showDelete) {
                 html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
             }
@@ -903,25 +905,27 @@ class Scaffer {
         html += '      renderRecords();\n';
         html += '    }\n\n';
 
-        // Column visibility
-        html += '    function toggleCol(field, visible) {\n';
-        html += "      document.querySelectorAll('#recordsTable [data-field=\"' + field + '\"]').forEach(function(el) {\n";
-        html += '        el.style.display = visible ? "" : "none";\n';
-        html += '      });\n';
-        html += '    }\n\n';
+        if (s.showColumnVisibility) {
+            // Column visibility
+            html += '    function toggleCol(field, visible) {\n';
+            html += "      document.querySelectorAll('#recordsTable [data-field=\"' + field + '\"]').forEach(function(el) {\n";
+            html += '        el.style.display = visible ? "" : "none";\n';
+            html += '      });\n';
+            html += '    }\n\n';
 
-        // Column menu toggle
-        html += '    var colMenuVisible = false;\n';
-        html += '    function toggleColMenu() {\n';
-        html += '      colMenuVisible = !colMenuVisible;\n';
-        html += "      document.getElementById('colMenu').style.display = colMenuVisible ? 'block' : 'none';\n";
-        html += '    }\n';
-        html += "    document.addEventListener('click', function(e) {\n";
-        html += "      if (!e.target.closest('#colMenu, [onclick*=\"toggleColMenu\"]')) {\n";
-        html += "        document.getElementById('colMenu').style.display = 'none';\n";
-        html += '        colMenuVisible = false;\n';
-        html += '      }\n';
-        html += '    });\n\n';
+            // Column menu toggle
+            html += '    var colMenuVisible = false;\n';
+            html += '    function toggleColMenu() {\n';
+            html += '      colMenuVisible = !colMenuVisible;\n';
+            html += "      document.getElementById('colMenu').style.display = colMenuVisible ? 'block' : 'none';\n";
+            html += '    }\n';
+            html += "    document.addEventListener('click', function(e) {\n";
+            html += "      if (!e.target.closest('#colMenu, [onclick*=\"toggleColMenu\"]')) {\n";
+            html += "        document.getElementById('colMenu').style.display = 'none';\n";
+            html += '        colMenuVisible = false;\n';
+            html += '      }\n';
+            html += '    });\n\n';
+        }
 
         // Form submit handler (only creates when modal; also updates when inline)
         html += "    document.getElementById('recordForm').onsubmit = async function(e) {\n";
@@ -1091,6 +1095,17 @@ class Scaffer {
             html += "        await _fetch(API + '/' + id, { method: 'DELETE' });\n";
             html += '        loadRecords();\n';
             html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record deactivated.</div>';\n";
+            html += '      } catch (err) {\n';
+            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+            html += '      }\n';
+            html += '    }\n\n';
+
+            html += '    async function activateRecord(id) {\n';
+            html += "      if (!confirm('Activate this record?')) return;\n";
+            html += '      try {\n';
+            html += "        await _fetch(API + '/' + id + '/activate', { method: 'PUT' });\n";
+            html += '        loadRecords();\n';
+            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record activated.</div>';\n";
             html += '      } catch (err) {\n';
             html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
             html += '      }\n';

@@ -31,7 +31,8 @@ class CodeGenerator {
             editStyle: raw.editStyle || 'form',
             pageSize: raw.pageSize || 10,
             sortField: raw.sortField || '',
-            sortDir: raw.sortDir || 'asc'
+            sortDir: raw.sortDir || 'asc',
+            showColumnVisibility: raw.showColumnVisibility === true
         };
     }
 
@@ -102,6 +103,7 @@ class CodeGenerator {
         if (statField) {
             const s = this._getFullSettings(tableName);
             lines.push(`const ${varPrefix}Deactivate = db.prepare("UPDATE ${tableName} SET ${statField.name} = '${s.statusInactiveValue}' WHERE ${pk} = ?");`);
+            lines.push(`const ${varPrefix}Activate = db.prepare("UPDATE ${tableName} SET ${statField.name} = '${s.statusActiveValue}' WHERE ${pk} = ?");`);
             if (s.showDeleteButton) {
                 lines.push(`const ${varPrefix}HardDelete = db.prepare('DELETE FROM ${tableName} WHERE ${pk} = ?');`);
             }
@@ -185,6 +187,19 @@ class CodeGenerator {
         routes += `  }\n`;
         routes += `});\n`;
 
+        if (statField) {
+            routes += `\n// Activate ${tableName}\n`;
+            routes += `app.put('${itemRoute}/activate', (req, res) => {\n`;
+            routes += `  try {\n`;
+            routes += `    const result = ${varPrefix}Activate.run(req.params.${pk});\n`;
+            routes += `    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });\n`;
+            routes += `    res.json({ activated: result.changes });\n`;
+            routes += `  } catch (err) {\n`;
+            routes += `    res.status(500).json({ error: err.message });\n`;
+            routes += `  }\n`;
+            routes += `});\n`;
+        }
+
         if (statField && s.showDeleteButton) {
             routes += `\n// Hard-delete ${tableName}\n`;
             routes += `app.post('${itemRoute}/delete', (req, res) => {\n`;
@@ -223,15 +238,17 @@ class CodeGenerator {
         let html = `<h2>${tableName}</h2>\n`;
         html += `<div style="display:flex;align-items:center;gap:8px;">\n`;
         html += `  <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)" style="flex:1;">\n`;
-        html += `  <div style="position:relative;">\n`;
-        html += `    <button type="button" onclick="toggleColMenu${tableName}()">Columns</button>\n`;
-        html += `    <div id="colMenu${tableName}" style="display:none;position:absolute;right:0;z-index:10;">\n`;
-        for (const f of fields) {
-            html += `      <label><input type="checkbox" data-field="${f.name}" checked onchange="toggleCol${tableName}('${f.name}', this.checked)"> ${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</label>\n`;
+        if (s.showColumnVisibility) {
+            html += `  <div style="position:relative;">\n`;
+            html += `    <button type="button" onclick="toggleColMenu${tableName}()">Columns</button>\n`;
+            html += `    <div id="colMenu${tableName}" style="display:none;position:absolute;right:0;z-index:10;">\n`;
+            for (const f of fields) {
+                html += `      <label><input type="checkbox" data-field="${f.name}" checked onchange="toggleCol${tableName}('${f.name}', this.checked)"> ${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</label>\n`;
+            }
+            html += `      <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol${tableName}('__actions__', this.checked)"> Actions</label>\n`;
+            html += `    </div>\n`;
+            html += `  </div>\n`;
         }
-        html += `      <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol${tableName}('__actions__', this.checked)"> Actions</label>\n`;
-        html += `    </div>\n`;
-        html += `  </div>\n`;
         html += `</div>\n`;
         html += `<div id="${tableName.toLowerCase()}List">Loading...</div>\n`;
         html += `<div id="pagination${tableName}" style="display:flex;align-items:center;justify-content:center;gap:4px;"></div>\n\n`;
@@ -399,11 +416,17 @@ class CodeGenerator {
         html += `      \${pageItems.map(function(item) {\n`;
         html += `        return \`<tr>\n`;
         html += `          ${cellRenderers}`;
-        if (showDelete) {
-            html += `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button> <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button></td>\n        `;
+        let actionsHtml = `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> `;
+        if (statField) {
+            actionsHtml += `\${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
+            if (showDelete) {
+                actionsHtml += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
+            }
         } else {
-            html += `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button></td>\n        `;
+            actionsHtml += `<button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>`;
         }
+        actionsHtml += `</td>\n        `;
+        html += actionsHtml;
         html += `\`;\n`;
         html += `      }).join('')}\n`;
         html += `    </table>\`;\n\n`;
@@ -439,20 +462,22 @@ class CodeGenerator {
         html += `    currentPage = page;\n`;
         html += `    render${tableName}();\n`;
         html += `  }\n\n`;
-        html += `  function toggleCol${tableName}(field, show) {\n`;
-        html += `    var cells = document.querySelectorAll('#${tableName.toLowerCase()}List [data-field="' + field + '"]');\n`;
-        html += `    cells.forEach(function(el) { el.style.display = show ? '' : 'none'; });\n`;
-        html += `  }\n\n`;
-        html += `  function toggleColMenu${tableName}() {\n`;
-        html += `    var menu = document.getElementById('colMenu${tableName}');\n`;
-        html += `    menu.style.display = menu.style.display === 'none' ? '' : 'none';\n`;
-        html += `  }\n`;
-        html += `  document.addEventListener('click', function(e) {\n`;
-        html += `    var menu = document.getElementById('colMenu${tableName}');\n`;
-        html += `    if (!e.target.closest('#colMenu${tableName}, [onclick*="toggleColMenu${tableName}"]')) {\n`;
-        html += `      menu.style.display = 'none';\n`;
-        html += `    }\n`;
-        html += `  });\n\n`;
+        if (s.showColumnVisibility) {
+            html += `  function toggleCol${tableName}(field, show) {\n`;
+            html += `    var cells = document.querySelectorAll('#${tableName.toLowerCase()}List [data-field="' + field + '"]');\n`;
+            html += `    cells.forEach(function(el) { el.style.display = show ? '' : 'none'; });\n`;
+            html += `  }\n\n`;
+            html += `  function toggleColMenu${tableName}() {\n`;
+            html += `    var menu = document.getElementById('colMenu${tableName}');\n`;
+            html += `    menu.style.display = menu.style.display === 'none' ? '' : 'none';\n`;
+            html += `  }\n`;
+            html += `  document.addEventListener('click', function(e) {\n`;
+            html += `    var menu = document.getElementById('colMenu${tableName}');\n`;
+            html += `    if (!e.target.closest('#colMenu${tableName}, [onclick*="toggleColMenu${tableName}"]')) {\n`;
+            html += `      menu.style.display = 'none';\n`;
+            html += `    }\n`;
+            html += `  });\n\n`;
+        }
 
         if (s.editStyle === 'modal') {
             const mid = tableName.toLowerCase() + 'EditModal';
@@ -492,6 +517,10 @@ class CodeGenerator {
         }
 
         html += `  async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
+
+        if (statField) {
+            html += `  async function activate${tableName}(id) { if (!confirm('Activate this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/activate', { method: 'PUT' }); load${tableName}(); }\n\n`;
+        }
 
         if (showDelete) {
             html += `  async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
@@ -666,6 +695,8 @@ class CodeGenerator {
         const s = this._getFullSettings(tableName);
         const actionLabel = statField ? 'Deactivate' : 'Delete';
         const actionFunc = statField ? 'deactivate' : 'delete';
+        const activeVal = statField ? s.statusActiveValue : '';
+        const inactiveVal = statField ? s.statusInactiveValue : '';
         const showDelete = statField && s.showDeleteButton;
 
         const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n      ');
@@ -744,8 +775,13 @@ class CodeGenerator {
         js += `    \${pageItems.map(function(item) {\n`;
         js += `      return \`<tr>\n`;
         js += `        ${cellRenderers}`;
-        if (showDelete) {
-            js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button> <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button></td>\n      `;
+        if (statField) {
+            let actionsJs = `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
+            if (showDelete) {
+                actionsJs += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
+            }
+            actionsJs += `</td>\n      `;
+            js += actionsJs;
         } else {
             js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button></td>\n      `;
         }
@@ -784,13 +820,18 @@ class CodeGenerator {
         js += `  currentPage = page;\n`;
         js += `  render${tableName}();\n`;
         js += `}\n\n`;
-        js += `function toggleCol${tableName}(field, show) {\n`;
-        js += `  var cells = document.querySelectorAll('#${lid} [data-field="' + field + '"]');\n`;
-        js += `  cells.forEach(function(el) {\n`;
-        js += `    el.style.display = show ? '' : 'none';\n`;
-        js += `  });\n`;
-        js += `}\n\n`;
+        if (s.showColumnVisibility) {
+            js += `function toggleCol${tableName}(field, show) {\n`;
+            js += `  var cells = document.querySelectorAll('#${lid} [data-field="' + field + '"]');\n`;
+            js += `  cells.forEach(function(el) {\n`;
+            js += `    el.style.display = show ? '' : 'none';\n`;
+            js += `  });\n`;
+            js += `}\n\n`;
+        }
         js += `async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
+        if (statField) {
+            js += `async function activate${tableName}(id) { if (!confirm('Activate this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/activate', { method: 'PUT' }); load${tableName}(); }\n\n`;
+        }
         if (showDelete) {
             js += `async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
         }

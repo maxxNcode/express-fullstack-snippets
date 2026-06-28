@@ -2046,6 +2046,13 @@ class SchemaViewProvider {
             </div>
 
             <div class="rule-row" style="margin-bottom:14px;">
+                <label style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="tsShowColumnVisibility" />
+                    <span style="font-weight:600;color:#ddd;">Show "Columns" dropdown to toggle column visibility</span>
+                </label>
+            </div>
+
+            <div class="rule-row" style="margin-bottom:14px;">
                 <label style="font-weight:600;color:#ddd;display:block;margin-bottom:4px;">Rows per page (list view)</label>
                 <select id="tsPageSize" style="width:100%;padding:4px 8px;font-size:13px;">
                     <option value="5">5</option>
