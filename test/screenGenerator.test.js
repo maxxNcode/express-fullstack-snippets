@@ -136,6 +136,7 @@ describe('ScreenGenerator', function() {
     describe('generateTransactionDataRoute', function() {
         it('should produce Express route code', function() {
             const mockRegistry = {
+                getTables: () => ['Candidates'],
                 getTable: (name) => name === 'Candidates' ? {
                     fields: [
                         { name: 'candID', type: 'INTEGER', pk: true },

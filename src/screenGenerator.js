@@ -112,7 +112,7 @@ class ScreenGenerator {
         h += '    </div>\n';
         h += '  </div>\n';
         h += '  <script>\n';
-
+        h += '    function esc(str) { return String(str).replace(/&/g,\'&amp;\').replace(/</g,\'&lt;\').replace(/>/g,\'&gt;\').replace(/"/g,\'&quot;\'); }\n';
         h += '    const PAGE_CONFIG = ' + pageConfig + ';\n';
         h += '    const API_DATA = \'/api/\' + PAGE_CONFIG.name + \'/data\';\n';
         h += '    const API_SUBMIT = \'/api/\' + PAGE_CONFIG.name + \'/submit\';\n';
@@ -151,7 +151,7 @@ class ScreenGenerator {
         h += '      Object.keys(groups).forEach(function(key) {\n';
         h += '        const group = groups[key];\n';
         h += '        html += \'<div class="group-section">\';\n';
-        h += '        html += \'<h3 class="group-header">\' + group.header + \'</h3>\';\n';
+        h += '        html += \'<h3 class="group-header">\' + esc(group.header) + \'</h3>\';\n';
         h += '        html += \'<div class="screen-items">\';\n';
         h += '        group.items.forEach(function(item) {\n';
         h += '          html += renderItem(item);\n';
@@ -179,7 +179,7 @@ class ScreenGenerator {
         h += '      const groupField = PAGE_CONFIG.display.groupField;\n';
         h += '      const groupVal = groupField ? (getItemField(item, groupField) || \'\') : \'\';\n';
         h += '      const limitVal = LIMIT_KEY ? (item[LIMIT_KEY] != null ? item[LIMIT_KEY] : 0) : 0;\n';
-        h += '      let html = \'<div class="screen-item" data-value="\' + value + \'" data-group="\' + groupVal + \'" data-limit="\' + limitVal + \'" onclick="toggleSelection(this)">\';\n';
+        h += '      let html = \'<div class="screen-item" data-value="\' + esc(value) + \'" data-group="\' + esc(groupVal) + \'" data-limit="\' + limitVal + \'" onclick="toggleSelection(this)">\';\n';
         h += '      html += renderFields(item);\n';
         h += '      html += \'</div>\';\n';
         h += '      return html;\n';
@@ -192,7 +192,7 @@ class ScreenGenerator {
         h += '        if (f.show === false || f.displayAs === \'selectable\') return;\n';
         h += '        const key = f.table + \'_\' + f.field;\n';
         h += '        const val = item[key] != null ? item[key] : \'\';\n';
-        h += '        html += \'<div class="item-field"><span class="item-label">\' + f.field + \':</span> <span class="item-value">\' + val + \'</span></div>\';\n';
+        h += '        html += \'<div class="item-field"><span class="item-label">\' + esc(f.field) + \':</span> <span class="item-value">\' + esc(val) + \'</span></div>\';\n';
         h += '      });\n';
         h += '      return html;\n';
         h += '    }\n\n';
@@ -388,7 +388,7 @@ class ScreenGenerator {
         h += '    <div id="reportContent"><div class="loading">Loading report data...</div></div>\n';
         h += '  </div>\n';
         h += '  <script>\n';
-
+        h += '    function esc(str) { return String(str).replace(/&/g,\'&amp;\').replace(/</g,\'&lt;\').replace(/>/g,\'&gt;\').replace(/"/g,\'&quot;\'); }\n';
         h += '    const PAGE_CONFIG = ' + pageConfig + ';\n';
         h += '    const API = \'/api/\' + PAGE_CONFIG.name;\n\n';
 
@@ -467,9 +467,9 @@ class ScreenGenerator {
         h += '          var sortField = cfg.sortField || cfg.sourceField;\n';
         h += '          var sourceField = cfg.sourceField;\n';
         h += '          var sorted = rows.slice().sort(function(a, b) {\n';
-        h += '            var av = a[sortField] || 0, bv = b[sortField] || 0;\n';
-        h += '            if (typeof av === \'string\') av = av.localeCompare(bv);\n';
-        h += '            return av - bv;\n';
+        h += '            var av = a[sortField], bv = b[sortField];\n';
+        h += '            if (typeof av === \'string\') return String(av).localeCompare(String(bv));\n';
+        h += '            return (Number(av) || 0) - (Number(bv) || 0);\n';
         h += '          });\n';
         h += '          var running = 0;\n';
         h += '          sorted.forEach(function(row) {\n';
@@ -540,7 +540,7 @@ class ScreenGenerator {
         h += '      Object.keys(groups).forEach(function(key) {\n';
         h += '        var group = groups[key];\n';
         h += '        html += \'<div class="group-section">\';\n';
-        h += '        html += \'<h3 class="group-header">\' + group.header + \'</h3>\';\n';
+        h += '        html += \'<h3 class="group-header">\' + esc(group.header) + \'</h3>\';\n';
         h += '        html += renderTable(group.rows);\n';
         h += '        html += \'</div>\';\n';
         h += '      });\n';
@@ -565,7 +565,7 @@ class ScreenGenerator {
         h += '          var field = s.stat ? s.stat.field : s.field;\n';
         h += '          var label = s.stat ? s.stat.label : (s.label || field);\n';
         h += '          var val = field ? row[field] : \'\';\n';
-        h += '          html += \'<div class="card-stat"><span class="stat-label">\' + label + \'</span><span class="stat-value">\' + (val != null ? val : \'\') + \'</span></div>\';\n';
+        h += '          html += \'<div class="card-stat"><span class="stat-label">\' + esc(label) + \'</span><span class="stat-value">\' + esc(val != null ? val : \'\') + \'</span></div>\';\n';
         h += '        });\n';
         h += '        html += \'</div>\';\n';
         h += '      });\n';
@@ -596,7 +596,7 @@ class ScreenGenerator {
 
         h += '    function resolveTemplate(template, item) {\n';
         h += '      return String(template).replace(/\\{\\{\\s*(\\w+)\\s*\\}\\}/g, function(match, field) {\n';
-        h += '        return item[field] != null ? item[field] : \'\';\n';
+        h += '        return item[field] != null ? esc(item[field]) : \'\';\n';
         h += '      });\n';
         h += '    }\n\n';
 
@@ -717,7 +717,7 @@ class ScreenGenerator {
                     }
                 }
                 if (!found) {
-                    joins += '\n  LEFT JOIN ' + t2 + ' ON 1=0';
+                    joins += '\n  CROSS JOIN ' + t2;
                 }
             }
         }
