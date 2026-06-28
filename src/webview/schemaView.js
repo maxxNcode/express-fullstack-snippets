@@ -2082,7 +2082,7 @@
                 '<h3>Preview: ' + name + '</h3>' +
                 '<button class="btn btn-sm btn-secondary" onclick="this.closest(\'.modal-overlay\').remove()">X</button>' +
                 '</div>' +
-                '<iframe style="width:100%;height:70vh;border:1px solid #ddd;border-radius:4px;" srcdoc="' + html.replace(/"/g, '&quot;').replace(/'/g, "\\'") + '"></iframe>' +
+                '<iframe style="width:100%;height:70vh;border:1px solid #ddd;border-radius:4px;" srcdoc="' + html.replace(/"/g, '&quot;').replace(/'/g, '&apos;') + '"></iframe>' +
                 '</div>';
             document.body.appendChild(modal);
         }
