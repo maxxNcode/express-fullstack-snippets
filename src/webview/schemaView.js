@@ -43,6 +43,10 @@
             vscode.postMessage({ command: 'generateAll' });
         }
 
+        function generateProject() {
+            vscode.postMessage({ command: 'generateProject' });
+        }
+
         function generateTable(name, event) {
             if (event) event.stopPropagation();
             vscode.postMessage({ command: 'generateTable', tableName: name });
@@ -1469,11 +1473,13 @@
                 '<button class="btn btn-danger btn-sm" onclick="removeArPreCheck(' + idx + ')">&times;</button>' +
                 '</div>';
             document.getElementById('arPreChecks').insertAdjacentHTML('beforeend', html);
+            saveActionRouteDraft();
         }
 
         function removeArPreCheck(idx) {
             var el = document.getElementById('arPreCheck' + idx);
             if (el) el.remove();
+            saveActionRouteDraft();
         }
 
         function addArLimitCheck() {
@@ -1487,11 +1493,13 @@
                 '<button class="btn btn-danger btn-sm" onclick="removeArLimitCheck(' + idx + ')">&times;</button>' +
                 '</div>';
             document.getElementById('arLimitChecks').insertAdjacentHTML('beforeend', html);
+            saveActionRouteDraft();
         }
 
         function removeArLimitCheck(idx) {
             var el = document.getElementById('arLimitCheck' + idx);
             if (el) el.remove();
+            saveActionRouteDraft();
         }
 
         function addArPostAction() {
@@ -1504,11 +1512,13 @@
                 '<button class="btn btn-danger btn-sm" onclick="removeArPostAction(' + idx + ')">&times;</button>' +
                 '</div>';
             document.getElementById('arPostActions').insertAdjacentHTML('beforeend', html);
+            saveActionRouteDraft();
         }
 
         function removeArPostAction(idx) {
             var el = document.getElementById('arPostAction' + idx);
             if (el) el.remove();
+            saveActionRouteDraft();
         }
 
         function getTableOptionsHtml() {
@@ -1593,6 +1603,113 @@
             };
         }
 
+        function saveActionRouteDraft() {
+            var form = document.getElementById('actionRouteForm');
+            if (!form || form.style.display === 'none') return;
+            try {
+                var draft = buildActionRoute();
+                vscode.setState({ actionRouteDraft: draft });
+            } catch(e) { /* ignore */ }
+        }
+
+        function restoreActionRouteDraft(draft) {
+            if (!draft) return;
+            var setVal = function(id, val) {
+                var el = document.getElementById(id);
+                if (el) el.value = val != null ? val : '';
+            };
+            setVal('arName', draft.name);
+            setVal('arDescription', draft.description);
+            setVal('arTargetTable', draft.targetTable);
+            setVal('arMethod', draft.method);
+            setVal('arUseJwt', draft.useJwt ? 'true' : 'false');
+            var idEl = document.getElementById('arIdentityField');
+            if (idEl && draft.identityField) {
+                var found = false;
+                for (var k = 0; k < idEl.options.length; k++) {
+                    if (idEl.options[k].value.endsWith('.' + draft.identityField)) {
+                        idEl.selectedIndex = k;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) idEl.value = '';
+            }
+
+            // Restore pre-checks
+            if (draft.preChecks) {
+                draft.preChecks.forEach(function(pc) {
+                    var idx = arPreCheckCount++;
+                    var html = '<div class="qb-filter-row" id="arPreCheck' + idx + '">' +
+                        '<select id="arPC_Table' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                        '<select id="arPC_CheckField' + idx + '">' + getFKOptionsHtml() + '</select>' +
+                        '<select id="arPC_Op' + idx + '"><option value="=">=</option><option value="!=">!=</option><option value=">">></option><option value="<"><</option></select>' +
+                        '<input type="text" id="arPC_Value' + idx + '" placeholder="value" />' +
+                        '<input type="text" id="arPC_Msg' + idx + '" placeholder="error message" style="min-width:150px;" />' +
+                        '<button class="btn btn-danger btn-sm" onclick="removeArPreCheck(' + idx + ')">&times;</button>' +
+                        '</div>';
+                    document.getElementById('arPreChecks').insertAdjacentHTML('beforeend', html);
+                    setVal('arPC_Table' + idx, pc.checkTable);
+                    setVal('arPC_CheckField' + idx, (pc.checkTable || '') + '.' + (pc.checkField || ''));
+                    setVal('arPC_Op' + idx, pc.operator || '=');
+                    setVal('arPC_Value' + idx, pc.checkValue);
+                    setVal('arPC_Msg' + idx, pc.errorMessage);
+                });
+            }
+
+            // Restore limit checks
+            if (draft.limitChecks) {
+                draft.limitChecks.forEach(function(lc) {
+                    var idx = arLimitCheckCount++;
+                    var html = '<div class="qb-filter-row" id="arLimitCheck' + idx + '">' +
+                        '<select id="arLC_CountTable' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                        '<select id="arLC_GroupField' + idx + '">' + getFKOptionsHtml() + '</select>' +
+                        '<input type="text" id="arLC_LimitField' + idx + '" placeholder="limit field (e.g. maxSlots)" />' +
+                        '<select id="arLC_LimitTable' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                        '<input type="text" id="arLC_Msg' + idx + '" placeholder="error message" style="min-width:150px;" />' +
+                        '<button class="btn btn-danger btn-sm" onclick="removeArLimitCheck(' + idx + ')">&times;</button>' +
+                        '</div>';
+                    document.getElementById('arLimitChecks').insertAdjacentHTML('beforeend', html);
+                    setVal('arLC_CountTable' + idx, lc.countTable);
+                    setVal('arLC_GroupField' + idx, (lc.countTable || '') + '.' + (lc.groupField || ''));
+                    setVal('arLC_LimitField' + idx, lc.limitField);
+                    setVal('arLC_LimitTable' + idx, lc.limitTable);
+                    setVal('arLC_Msg' + idx, lc.errorMessage);
+                });
+            }
+
+            // Restore post-actions
+            if (draft.postActions) {
+                draft.postActions.forEach(function(pa) {
+                    var idx = arPostActionCount++;
+                    var html = '<div class="qb-filter-row" id="arPostAction' + idx + '">' +
+                        '<select id="arPA_SetTable' + idx + '">' + getTableOptionsHtml() + '</select>' +
+                        '<input type="text" id="arPA_SetField' + idx + '" placeholder="set field" />' +
+                        '<input type="text" id="arPA_SetValue' + idx + '" placeholder="set value (SQL)" />' +
+                        '<select id="arPA_WhereField' + idx + '">' + getFKOptionsHtml() + '</select>' +
+                        '<button class="btn btn-danger btn-sm" onclick="removeArPostAction(' + idx + ')">&times;</button>' +
+                        '</div>';
+                    document.getElementById('arPostActions').insertAdjacentHTML('beforeend', html);
+                    setVal('arPA_SetTable' + idx, pa.setTable);
+                    setVal('arPA_SetField' + idx, pa.setField);
+                    setVal('arPA_SetValue' + idx, pa.setValue);
+                    var wfEl = document.getElementById('arPA_WhereField' + idx);
+                    if (wfEl) {
+                        var found = false;
+                        var suffix = '.' + (pa.whereField || '');
+                        for (var k = 0; k < wfEl.options.length; k++) {
+                            if (wfEl.options[k].value.endsWith(suffix)) {
+                                wfEl.selectedIndex = k;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) wfEl.value = '';
+                    }
+                });
+            }
+        }
+
         function addActionRoute() {
             var route = buildActionRoute();
             if (!route.name || !route.targetTable) {
@@ -1600,6 +1717,7 @@
                 return;
             }
             vscode.postMessage({ command: 'addActionRoute', route: route });
+            vscode.setState({ actionRouteDraft: null });
         }
 
         function removeActionRoute(index, event) {
@@ -1616,6 +1734,20 @@
             var route = buildActionRoute();
             vscode.postMessage({ command: 'generateActionRoute', route: route });
         }
+
+        // Auto-save action route draft on any input change
+        (function initActionRouteDraft() {
+            var form = document.getElementById('actionRouteForm');
+            if (form) {
+                form.addEventListener('input', function() { saveActionRouteDraft(); });
+                form.addEventListener('change', function() { saveActionRouteDraft(); });
+            }
+            // Restore saved draft
+            var state = vscode.getState();
+            if (state && state.actionRouteDraft) {
+                restoreActionRouteDraft(state.actionRouteDraft);
+            }
+        })();
 
         // --- Screens UI ---
 
@@ -2166,9 +2298,15 @@
             editStyleRadios.forEach(function(r) {
                 r.checked = (r.value === (settings.editStyle || 'form'));
             });
-            document.getElementById('tsShowDelete').checked = settings.showDeleteButton === true;
-            document.getElementById('tsShowColumnVisibility').checked = settings.showColumnVisibility !== false;
-            document.getElementById('tsPageSize').value = settings.pageSize || 10;
+            document.getElementById('tsShowDelete').checked = settings.showDeleteButton !== false;
+            document.getElementById('tsShowColumnVisibility').checked = settings.showColumnVisibility === true;
+            document.getElementById('tsShowSearch').checked = settings.showSearch === true;
+            document.getElementById('tsShowPagination').checked = settings.showPagination === true;
+            var listStyleRadios = document.querySelectorAll('input[name="tsListStyle"]');
+            listStyleRadios.forEach(function(r) {
+                r.checked = (r.value === (settings.listStyle || 'table'));
+            });
+            document.getElementById('tsPageSize').value = settings.pageSize != null ? settings.pageSize : 10;
             var sortDirRadios = document.querySelectorAll('input[name="tsSortDir"]');
             sortDirRadios.forEach(function(r) {
                 r.checked = (r.value === (settings.sortDir || 'asc'));
@@ -2187,7 +2325,10 @@
                 editStyle: document.querySelector('input[name="tsEditStyle"]:checked').value,
                 showDeleteButton: document.getElementById('tsShowDelete').checked,
                 showColumnVisibility: document.getElementById('tsShowColumnVisibility').checked,
-                pageSize: parseInt(document.getElementById('tsPageSize').value) || 10,
+                showSearch: document.getElementById('tsShowSearch').checked,
+                showPagination: document.getElementById('tsShowPagination').checked,
+                listStyle: document.querySelector('input[name="tsListStyle"]:checked').value,
+                pageSize: parseInt(document.getElementById('tsPageSize').value) || 0,
                 sortField: document.getElementById('tsSortField').value,
                 sortDir: document.querySelector('input[name="tsSortDir"]:checked').value
             };

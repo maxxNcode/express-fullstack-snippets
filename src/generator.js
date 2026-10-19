@@ -27,12 +27,15 @@ class CodeGenerator {
             statusActiveValue: raw.statusActiveValue || 'active',
             statusInactiveValue: raw.statusInactiveValue || 'inactive',
             editMode: raw.editMode || 'put',
-            showDeleteButton: raw.showDeleteButton === true,
+            showDeleteButton: raw.showDeleteButton !== false,
             editStyle: raw.editStyle || 'form',
-            pageSize: raw.pageSize || 10,
+            pageSize: raw.pageSize != null ? raw.pageSize : 10,
             sortField: raw.sortField || '',
             sortDir: raw.sortDir || 'asc',
-            showColumnVisibility: raw.showColumnVisibility === true
+            showColumnVisibility: raw.showColumnVisibility === true,
+            showSearch: raw.showSearch === true,
+            showPagination: raw.showPagination === true,
+            listStyle: raw.listStyle || 'table'
         };
     }
 
@@ -43,9 +46,11 @@ class CodeGenerator {
         const name = field.name.toLowerCase();
         if (field.fk) return 'fk-select';
         if (/^BOOLEAN|BOOL|BIT$/.test(raw)) return 'checkbox';
-        if (/^DATE|DATETIME|TIMESTAMP$/.test(raw)) return 'date';
+        if (/^DATETIME|TIMESTAMP$/.test(raw)) return 'datetime-local';
+        if (raw === 'DATE') return 'date';
         if (raw === 'TIME') return 'time';
         if (raw === 'YEAR') return 'number';
+        if (/^(date_of_birth|dob|birth_date|birthday)$/.test(name)) return 'date';
         if (name.includes('email')) return 'email';
         if (name.includes('pass')) return 'password';
         if (name.includes('url') || name.includes('website') || name.includes('site')) return 'url';
@@ -66,6 +71,20 @@ class CodeGenerator {
             if (match) return match;
         }
         return table.fields.find(f => f.name.toLowerCase().includes('stat')) || null;
+    }
+
+    _getAutoTimestampFields(tableName) {
+        const table = this.schemaRegistry.getTable(tableName);
+        if (!table) return { created: null, updated: null };
+        const lowerNames = table.fields.map(f => f.name.toLowerCase());
+        const created = table.fields.find(f => /^(created_at|date_created|created)$/i.test(f.name)) || null;
+        const updated = table.fields.find(f => /^(updated_at|date_updated|modified_at|modified)$/i.test(f.name)) || null;
+        return { created, updated };
+    }
+
+    _isAutoTimestampField(tableName, fieldName) {
+        const { created, updated } = this._getAutoTimestampFields(tableName);
+        return (created && created.name === fieldName) || (updated && updated.name === fieldName);
     }
 
     _getEditMode(tableName) {
@@ -114,11 +133,27 @@ class CodeGenerator {
         return lines.join('\n');
     }
 
+    /** Destructuring default (e.g. " = 'active'") mirroring a column's SQL DEFAULT. */
+    _jsDefault(field) {
+        const dv = field.default;
+        if (dv === undefined || dv === null || String(dv).toUpperCase() === 'NULL') return '';
+        const up = String(dv).toUpperCase();
+        if (up === 'CURRENT_TIMESTAMP') return ' = new Date().toISOString()';
+        if (up === 'CURRENT_DATE') return ' = new Date().toISOString().slice(0, 10)';
+        if (up === 'CURRENT_TIME') return ' = new Date().toISOString().slice(11, 19)';
+        if (/^-?\d+(\.\d+)?$/.test(String(dv))) return ' = ' + dv;
+        return " = '" + String(dv).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+    }
+
     generateCrudRoutes(tableName) {
         const table = this.schemaRegistry.getTable(tableName);
         if (!table) return '// Table not found';
         const pk = this.getPK(tableName);
         const nonPK = this.getNonPKFields(tableName);
+        const { created, updated } = this._getAutoTimestampFields(tableName);
+        const autoCreated = created ? created.name : null;
+        const autoUpdated = updated ? updated.name : null;
+        const userNonPK = nonPK.filter(f => f.name !== autoCreated && f.name !== autoUpdated);
         const varPrefix = tableName.charAt(0).toLowerCase() + tableName.slice(1);
         const statField = this.getStatField(tableName);
         const s = this._getFullSettings(tableName);
@@ -151,8 +186,20 @@ class CodeGenerator {
             routes += `// Create ${tableName}\n`;
             routes += `app.post('${listRoute}', (req, res) => {\n`;
             routes += `  try {\n`;
-            routes += `    const { ${nonPK.map(f => f.name).join(', ')} } = req.body;\n`;
-            routes += `    const result = ${varPrefix}Insert.run(${nonPK.map(f => f.name).join(', ')});\n`;
+            if (userNonPK.length > 0) {
+                // Omitted fields fall back to the column DEFAULT instead of being saved as NULL
+                routes += `    const { ${userNonPK.map(f => f.name + this._jsDefault(f)).join(', ')} } = req.body;\n`;
+            }
+            let insertParams = userNonPK.map(f => f.name).join(', ');
+            if (autoCreated) {
+                if (insertParams) insertParams += ', ';
+                insertParams += `new Date().toISOString()`;
+            }
+            if (autoUpdated) {
+                if (insertParams) insertParams += ', ';
+                insertParams += `new Date().toISOString()`;
+            }
+            routes += `    const result = ${varPrefix}Insert.run(${insertParams});\n`;
             routes += `    res.status(201).json({ ${pk}: result.lastInsertRowid });\n`;
             routes += `  } catch (err) {\n`;
             routes += `    res.status(500).json({ error: err.message });\n`;
@@ -163,8 +210,15 @@ class CodeGenerator {
             const updateMethod = this._getEditMode(tableName);
             routes += `app.${updateMethod}('${itemRoute}', (req, res) => {\n`;
             routes += `  try {\n`;
-            routes += `    const { ${nonPK.map(f => f.name).join(', ')} } = req.body;\n`;
-            routes += `    const result = ${varPrefix}Update.run(${nonPK.map(f => f.name).join(', ')}, req.params.${pk});\n`;
+            if (userNonPK.length > 0) {
+                routes += `    const { ${userNonPK.map(f => f.name).join(', ')} } = req.body;\n`;
+            }
+            let updateParams = userNonPK.map(f => f.name).join(', ');
+            if (autoUpdated) {
+                if (updateParams) updateParams += ', ';
+                updateParams += `new Date().toISOString()`;
+            }
+            routes += `    const result = ${varPrefix}Update.run(${updateParams}, req.params.${pk});\n`;
             routes += `    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });\n`;
             routes += `    res.json({ updated: result.changes });\n`;
             routes += `  } catch (err) {\n`;
@@ -242,7 +296,9 @@ class CodeGenerator {
 
         let html = `<h2>${tableName}</h2>\n`;
         html += `<div style="display:flex;align-items:center;gap:8px;">\n`;
-        html += `  <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)" style="flex:1;">\n`;
+        if (s.showSearch) {
+            html += `  <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)" style="flex:1;">\n`;
+        }
         if (s.showColumnVisibility) {
             html += `  <div style="position:relative;">\n`;
             html += `    <button type="button" onclick="toggleColMenu${tableName}()">Columns</button>\n`;
@@ -255,8 +311,21 @@ class CodeGenerator {
             html += `  </div>\n`;
         }
         html += `</div>\n`;
+        if (s.listStyle === 'card') {
+            html += `<style>\n`;
+            html += `.card-grid{display:flex;flex-wrap:wrap;gap:12px;}\n`;
+            html += `.card{border:1px solid;padding:16px;border-radius:8px;flex:1;min-width:280px;}\n`;
+            html += `.card-field{margin-bottom:8px;}\n`;
+            html += `.card-field label{display:block;font-weight:600;}\n`;
+            html += `.card-actions{margin-top:12px;display:flex;gap:8px;}\n`;
+            html += `</style>\n`;
+        }
+        html += `<!-- njs-list-style: ${s.listStyle} -->\n`;
         html += `<div id="${tableName.toLowerCase()}List">Loading...</div>\n`;
-        html += `<div id="pagination${tableName}" style="display:flex;align-items:center;justify-content:center;gap:4px;"></div>\n\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            html += `<div id="pagination${tableName}" style="display:flex;align-items:center;justify-content:center;gap:4px;"></div>\n`;
+        }
+        html += `\n`;
 
         if (s.editStyle === 'modal') {
             html += `<div id="${tableName.toLowerCase()}EditModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:1000;align-items:center;justify-content:center;">\n`;
@@ -322,7 +391,7 @@ class CodeGenerator {
                             for (const o of f.options) {
                                 html += `        <label><input type="checkbox" data-field="${f.name}" value="${o.value}" onchange="updateE${f.name}()"> ${o.label}</label><br>\n`;
                             }
-                            html += `        <script>function updateE${f.name}(){var a=[];document.querySelectorAll('#${mid} [data-field="${f.name}"]:checked').forEach(function(c){a.push(c.value)});document.getElementById('e${f.name}Val').value=a.join(',')}<\/script>\n`;
+                            html += `        <script>function updateE${f.name}(){var a=[];document.querySelectorAll('#${mid} [data-field="${f.name}"]:checked').forEach(function(box){a.push(box.value)});document.getElementById('e${f.name}Val').value=a.join(',')}<\/script>\n`;
                             html += `      </div>\n`;
                         } else {
                             html += `      <label><input type="checkbox" name="${f.name}" value="1"${required}> ${label}</label>\n`;
@@ -385,33 +454,43 @@ class CodeGenerator {
         html += `<script>\n`;
         html += `  const API = '${api}';\n`;
         html += `  var data = [];\n`;
-        html += `  var currentPage = 1;\n`;
-        html += `  var searchQuery = '';\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            html += `  var currentPage = 1;\n`;
+            html += `  var pageSize = ${s.pageSize || 10};\n`;
+        }
+        if (s.showSearch) {
+            html += `  var searchQuery = '';\n`;
+        }
         html += `  var sortField = '${s.sortField}';\n`;
-        html += `  var sortDir = '${s.sortDir || 'asc'}';\n`;
-        html += `  var pageSize = ${s.pageSize || 10};\n\n`;
+        html += `  var sortDir = '${s.sortDir || 'asc'}';\n\n`;
         html += `  async function load${tableName}() {\n`;
         html += `    var response = await fetch(API);\n`;
         html += `    data = await response.json();\n`;
-        html += `    currentPage = 1;\n`;
-        html += `    searchQuery = '';\n`;
-        html += `    var searchEl = document.getElementById('search${tableName}');\n`;
-        html += `    if (searchEl) {\n`;
-        html += `      searchEl.value = '';\n`;
-        html += `    }\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            html += `    currentPage = 1;\n`;
+        }
+        if (s.showSearch) {
+            html += `    searchQuery = '';\n`;
+            html += `    var searchEl = document.getElementById('search${tableName}');\n`;
+            html += `    if (searchEl) {\n`;
+            html += `      searchEl.value = '';\n`;
+            html += `    }\n`;
+        }
         html += `    render${tableName}();\n`;
         html += `  }\n\n`;
         html += `  function render${tableName}() {\n`;
         html += `    var items = data.slice();\n\n`;
-        html += `    // Search filter\n`;
-        html += `    if (searchQuery) {\n`;
-        html += `      var q = searchQuery.toLowerCase();\n`;
-        html += `      items = items.filter(function(item) {\n`;
-        html += `        return Object.values(item).some(function(value) {\n`;
-        html += `          return String(value).toLowerCase().includes(q);\n`;
-        html += `        });\n`;
-        html += `      });\n`;
-        html += `    }\n\n`;
+        if (s.showSearch) {
+            html += `    // Search filter\n`;
+            html += `    if (searchQuery) {\n`;
+            html += `      var q = searchQuery.toLowerCase();\n`;
+            html += `      items = items.filter(function(item) {\n`;
+            html += `        return Object.values(item).some(function(value) {\n`;
+            html += `          return String(value).toLowerCase().includes(q);\n`;
+            html += `        });\n`;
+            html += `      });\n`;
+            html += `    }\n\n`;
+        }
         html += `    // Sort\n`;
         html += `    if (sortField) {\n`;
         html += `      items.sort(function(a, b) {\n`;
@@ -426,60 +505,101 @@ class CodeGenerator {
         html += `        return sortDir === 'asc' ? result : -result;\n`;
         html += `      });\n`;
         html += `    }\n\n`;
-        html += `    var total = items.length;\n`;
-        html += `    var totalPages = Math.ceil(total / pageSize) || 1;\n`;
-        html += `    if (currentPage > totalPages) {\n`;
-        html += `      currentPage = totalPages;\n`;
-        html += `    }\n\n`;
         html += `    var list = document.getElementById('${tableName.toLowerCase()}List');\n\n`;
         html += `    // Empty state\n`;
-        html += `    if (total === 0) {\n`;
+        html += `    if (items.length === 0) {\n`;
         html += `      list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>';\n`;
-        html += `      document.getElementById('pagination${tableName}').innerHTML = '';\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            html += `      document.getElementById('pagination${tableName}').innerHTML = '';\n`;
+        }
         html += `      return;\n`;
         html += `    }\n\n`;
-        html += `    var pageItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);\n\n`;
-        html += `    // Render table\n`;
-        html += `    list.innerHTML = \`<table>\n`;
-        html += `      <tr>\n`;
-        html += `        ${headerCells}\n`;
-        html += `        <th data-field="__actions__">Actions</th>\n`;
-        html += `      </tr>\n`;
-        html += `      \${pageItems.map(function(item) {\n`;
-        html += `        return \`<tr>\n`;
-        html += `          ${cellRenderers}`;
-        let actionsHtml = `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> `;
-        if (statField) {
-            actionsHtml += `\${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
-            if (showDelete) {
-                actionsHtml += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
-            }
+        if (s.showPagination && s.pageSize > 0) {
+            html += `    var total = items.length;\n`;
+            html += `    var totalPages = Math.ceil(total / pageSize) || 1;\n`;
+            html += `    if (currentPage > totalPages) {\n`;
+            html += `      currentPage = totalPages;\n`;
+            html += `    }\n\n`;
+            html += `    var pageItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);\n\n`;
         } else {
-            actionsHtml += `<button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>`;
+            html += `    var pageItems = items;\n\n`;
         }
-        actionsHtml += `</td>\n        `;
-        html += actionsHtml;
-        html += `\`;\n`;
-        html += `      }).join('')}\n`;
-        html += `    </table>\`;\n\n`;
-        html += `    // Pagination controls\n`;
-        html += `    var p = '';\n`;
-        html += `    p += '<button onclick="goToPage${tableName}(1)">&laquo;</button>';\n`;
-        html += `    p += '<button onclick="goToPage${tableName}(' + (currentPage - 1) + ')"';\n`;
-        html += `    if (currentPage <= 1) p += ' disabled';\n`;
-        html += `    p += '>&lsaquo;</button>';\n`;
-        html += `    p += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + total + ')</span>';\n`;
-        html += `    p += '<button onclick="goToPage${tableName}(' + (currentPage + 1) + ')"';\n`;
-        html += `    if (currentPage >= totalPages) p += ' disabled';\n`;
-        html += `    p += '>&rsaquo;</button>';\n`;
-        html += `    p += '<button onclick="goToPage${tableName}(' + totalPages + ')">&raquo;</button>';\n`;
-        html += `    document.getElementById('pagination${tableName}').innerHTML = p;\n`;
+        html += `    console.log('njs: render ${tableName} listStyle=${s.listStyle}');\n`;
+        if (s.listStyle === 'card') {
+            html += `    list.innerHTML = \`<div class="card-grid">\n`;
+            html += `      \${pageItems.map(function(item) {\n`;
+            html += `        return \`<div class="card">\n`;
+            for (const f of fields) {
+                const label = f.name.charAt(0).toUpperCase() + f.name.slice(1);
+                if (f.options && f.options.length > 0) {
+                    const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
+                    html += `          <div class="card-field"><label>${label}</label><span>\${(${optMap})[item.${f.name}] || item.${f.name}}</span></div>\n`;
+                } else {
+                    html += `          <div class="card-field"><label>${label}</label><span>\${item.${f.name}}</span></div>\n`;
+                }
+            }
+            html += `          <div class="card-actions">\n`;
+            html += `            <button onclick="edit${tableName}(\${item.${pk}})">Edit</button>\n`;
+            if (statField) {
+                html += `            \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}\n`;
+                if (showDelete) {
+                    html += `            <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>\n`;
+                }
+            } else {
+                html += `            <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>\n`;
+            }
+            html += `          </div>\n`;
+            html += `        \`;\n`;
+            html += `      }).join('')}\n`;
+            html += `    </div>\`;\n\n`;
+        } else {
+            html += `    list.innerHTML = \`<table>\n`;
+            html += `      <tr>\n`;
+            html += `        ${headerCells}\n`;
+            html += `        <th data-field="__actions__">Actions</th>\n`;
+            html += `      </tr>\n`;
+            html += `      \${pageItems.map(function(item) {\n`;
+            html += `        return \`<tr>\n`;
+            html += `          ${cellRenderers}`;
+            let actionsHtml = `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> `;
+            if (statField) {
+                actionsHtml += `\${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
+                if (showDelete) {
+                    actionsHtml += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
+                }
+            } else {
+                actionsHtml += `<button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>`;
+            }
+            actionsHtml += `</td>\n        `;
+            html += actionsHtml;
+            html += `\`;\n`;
+            html += `      }).join('')}\n`;
+            html += `    </table>\`;\n\n`;
+        }
+        if (s.showPagination && s.pageSize > 0) {
+            html += `    // Pagination controls\n`;
+            html += `    var p = '';\n`;
+            html += `    p += '<button onclick="goToPage${tableName}(1)">&laquo;</button>';\n`;
+            html += `    p += '<button onclick="goToPage${tableName}(' + (currentPage - 1) + ')"';\n`;
+            html += `    if (currentPage <= 1) p += ' disabled';\n`;
+            html += `    p += '>&lsaquo;</button>';\n`;
+            html += `    p += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + total + ')</span>';\n`;
+            html += `    p += '<button onclick="goToPage${tableName}(' + (currentPage + 1) + ')"';\n`;
+            html += `    if (currentPage >= totalPages) p += ' disabled';\n`;
+            html += `    p += '>&rsaquo;</button>';\n`;
+            html += `    p += '<button onclick="goToPage${tableName}(' + totalPages + ')">&raquo;</button>';\n`;
+            html += `    document.getElementById('pagination${tableName}').innerHTML = p;\n`;
+        }
         html += `  }\n\n`;
-        html += `  function search${tableName}(query) {\n`;
-        html += `    searchQuery = query;\n`;
-        html += `    currentPage = 1;\n`;
-        html += `    render${tableName}();\n`;
-        html += `  }\n\n`;
+        if (s.showSearch) {
+            html += `  function search${tableName}(query) {\n`;
+            html += `    searchQuery = query;\n`;
+            if (s.showPagination && s.pageSize > 0) {
+                html += `    currentPage = 1;\n`;
+            }
+            html += `    render${tableName}();\n`;
+            html += `  }\n\n`;
+        }
         html += `  function sort${tableName}(field) {\n`;
         html += `    if (sortField === field) {\n`;
         html += `      sortDir = sortDir === 'asc' ? 'desc' : 'asc';\n`;
@@ -489,11 +609,13 @@ class CodeGenerator {
         html += `    }\n`;
         html += `    render${tableName}();\n`;
         html += `  }\n\n`;
-        html += `  function goToPage${tableName}(page) {\n`;
-        html += `    if (page < 1 || page > Math.ceil(data.length / pageSize)) return;\n`;
-        html += `    currentPage = page;\n`;
-        html += `    render${tableName}();\n`;
-        html += `  }\n\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            html += `  function goToPage${tableName}(page) {\n`;
+            html += `    if (page < 1 || page > Math.ceil(data.length / pageSize)) return;\n`;
+            html += `    currentPage = page;\n`;
+            html += `    render${tableName}();\n`;
+            html += `  }\n\n`;
+        }
         if (s.showColumnVisibility) {
             html += `  function toggleCol${tableName}(field, show) {\n`;
             html += `    var cells = document.querySelectorAll('#${tableName.toLowerCase()}List [data-field="' + field + '"]');\n`;
@@ -514,9 +636,9 @@ class CodeGenerator {
         if (s.editStyle === 'modal') {
             const mid = tableName.toLowerCase() + 'EditModal';
             const mf = tableName.toLowerCase() + 'EditForm';
-            html += `  var eid = null;\n\n`;
+            html += `  let editingId = null;\n\n`;
             html += `  async function edit${tableName}(id) {\n`;
-            html += `    eid = id;\n`;
+            html += `    editingId = id;\n`;
             html += `    try {\n`;
             html += `      var row = await (await fetch(API + '/' + id)).json();\n`;
             for (const f of fields) {
@@ -524,15 +646,15 @@ class CodeGenerator {
                 const isStatus = this._isStatusField(tableName, f.name);
                 const uiType = this._detectUiType(f, tableName);
                 if (isStatus && s.statusUiStyle === 'radio') {
-                    html += `      document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
+                    html += `      document.querySelectorAll(${q}).forEach(function(rb) { rb.checked = (rb.value == row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     html += `      var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
                 } else if (uiType === 'select') {
                     html += `      var sel = document.querySelector(${q}); if (sel) { sel.value = row.${f.name} ?? ''; }\n`;
                 } else if (uiType === 'radio') {
-                    html += `      document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
+                    html += `      document.querySelectorAll(${q}).forEach(function(rb) { rb.checked = (rb.value == row.${f.name}); });\n`;
                 } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                    html += `      document.querySelectorAll('#${mid} [data-field="${f.name}"]').forEach(function(c) { c.checked = (String(row.${f.name}).split(',').indexOf(c.value) !== -1); });\n`;
+                    html += `      document.querySelectorAll('#${mid} [data-field="${f.name}"]').forEach(function(box) { box.checked = (String(row.${f.name}).split(',').indexOf(box.value) !== -1); });\n`;
                     html += `      updateE${f.name}();\n`;
                 } else if (uiType === 'checkbox') {
                     html += `      var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == 1 || row.${f.name} === true); }\n`;
@@ -543,14 +665,13 @@ class CodeGenerator {
             html += `      document.getElementById('${mid}').style.display = 'flex';\n`;
             html += `    } catch (err) { alert('Error: ' + err.message); }\n`;
             html += `  }\n\n`;
-            html += `  function close${tableName}EditModal() { document.getElementById('${mid}').style.display = 'none'; eid = null; }\n\n`;
+            html += `  function close${tableName}EditModal() { document.getElementById('${mid}').style.display = 'none'; editingId = null; }\n\n`;
             html += `  document.getElementById('${mf}').onsubmit = async function(e) {\n`;
             html += `    e.preventDefault();\n`;
             html += `    var d = Object.fromEntries(new FormData(e.target));\n`;
-            html += `    /* set unchecked binary checkboxes to '0' */\n`;
-            html += `    document.querySelectorAll('#${mf} input[type=checkbox]:not(:checked)').forEach(function(c) { if (!c.name.endsWith('[]')) { d[c.name] = '0'; } });\n`;
+            html += `    document.querySelectorAll('#${mf} input[type=checkbox]:not(:checked)').forEach(function(checkbox) { if (!checkbox.name.endsWith('[]')) { d[checkbox.name] = '0'; } });\n`;
             html += `    try {\n`;
-            html += `      await fetch(API + '/' + eid, { method: '${s.editMode.toUpperCase()}', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
+            html += `      await fetch(API + '/' + editingId, { method: '${s.editMode.toUpperCase()}', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
             html += `      close${tableName}EditModal(); load${tableName}();\n`;
             html += `    } catch (err) { alert('Error: ' + err.message); }\n`;
             html += `  };\n\n`;
@@ -581,6 +702,7 @@ class CodeGenerator {
         let html = `<h2>Add ${tableName}</h2>\n`;
         html += `<form id="${tableName.toLowerCase()}Form">\n`;
         for (const f of fields) {
+            if (this._isAutoTimestampField(tableName, f.name)) continue;
             const label = f.name.charAt(0).toUpperCase() + f.name.slice(1);
             const required = f.notNull ? ' required' : '';
             const defVal = f.default !== undefined ? ` value="${f.default}"` : '';
@@ -641,7 +763,7 @@ class CodeGenerator {
                         for (const o of f.options) {
                             html += `    <label><input type="checkbox" data-field="${f.name}" value="${o.value}" onchange="update${f.name}()"> ${o.label}</label><br>\n`;
                         }
-                        html += `    <script>function update${f.name}(){var a=[];document.querySelectorAll('[data-field="${f.name}"]:checked').forEach(function(c){a.push(c.value)});document.getElementById('${f.name}Val').value=a.join(',')}<\/script>\n`;
+                        html += `    <script>function update${f.name}(){var a=[];document.querySelectorAll('[data-field="${f.name}"]:checked').forEach(function(box){a.push(box.value)});document.getElementById('${f.name}Val').value=a.join(',')}<\/script>\n`;
                         html += `  </div>\n`;
                     } else {
                         html += `  <label><input type="checkbox" name="${f.name}" value="1"> ${label}</label><br>\n`;
@@ -650,6 +772,8 @@ class CodeGenerator {
                     html += `  <textarea name="${f.name}" placeholder="${label}"${required}>${f.default || ''}</textarea><br>\n`;
                 } else if (uiType === 'date') {
                     html += `  <input name="${f.name}" type="date"${required}${defVal}><br>\n`;
+                } else if (uiType === 'datetime-local') {
+                    html += `  <input name="${f.name}" type="datetime-local"${required}${defVal}><br>\n`;
                 } else if (uiType === 'time') {
                     html += `  <input name="${f.name}" type="time"${required}${defVal}><br>\n`;
                 } else if (uiType === 'email') {
@@ -671,7 +795,7 @@ class CodeGenerator {
                 }
             }
         }
-        html += `  <button type="submit">Add</button>\n`;
+        html += `  <button type="button" id="saveBtn">Add</button>\n`;
         html += `</form>\n`;
 
         // Inline FK fetch for form selects
@@ -709,21 +833,35 @@ class CodeGenerator {
         const fn = tableName.toLowerCase() + 'Form';
         const lf = 'load' + tableName;
 
-        let js = `var eid = null;\n\n`;
-        js += `document.getElementById('${fn}').onsubmit = async function(e) {\n`;
-        js += `  e.preventDefault();\n`;
-        js += `  var d = Object.fromEntries(new FormData(e.target));\n`;
-        js += `  e.target.querySelectorAll('input[type=checkbox]:not(:checked)').forEach(function(c) { if (c.name) { d[c.name] = '0'; } });\n`;
-        if (isModalEdit) {
-            js += `  await fetch('${api}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
-        } else {
-            js += `  var url = eid ? '${api}/' + eid : '${api}';\n`;
-            js += `  var method = eid ? '${editMode.toUpperCase()}' : 'POST';\n`;
-            js += `  await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
-            js += `  eid = null;\n`;
+        let js = `let editingId = null;\n\n`;
+        js += `document.getElementById('saveBtn').onclick = async function() {\n`;
+        js += `  let data = {\n`;
+        for (const f of fields) {
+            if (this._isAutoTimestampField(tableName, f.name)) continue;
+            const uiType = this._detectUiType(f, tableName);
+            if (uiType === 'checkbox' && f.options && f.options.length > 0) {
+                js += `    ${f.name}: document.getElementById('${f.name}Val').value,\n`;
+            } else if (uiType === 'radio') {
+                js += `    ${f.name}: document.querySelector('[name="${f.name}"]:checked')?.value || '',\n`;
+            } else if (uiType === 'checkbox') {
+                js += `    ${f.name}: document.querySelector('[name="${f.name}"]').checked ? '1' : '0',\n`;
+            } else {
+                js += `    ${f.name}: document.querySelector('[name="${f.name}"]').value,\n`;
+            }
         }
-        js += `  e.target.reset();\n`;
-        js += `  if (typeof ${lf} === 'function') ${lf}();\n`;
+        js += `  };\n`;
+        js += `  let unchecked = document.getElementById('${fn}').querySelectorAll('input[type=checkbox]:not(:checked)');\n`;
+        js += `  unchecked.forEach(function(checkbox) { if (checkbox.name) data[checkbox.name] = '0'; });\n`;
+        if (isModalEdit) {
+            js += `  await fetch('${api}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n`;
+        } else {
+            js += `  let url = editingId ? '${api}/' + editingId : '${api}';\n`;
+            js += `  let method = editingId ? '${editMode.toUpperCase()}' : 'POST';\n`;
+            js += `  await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n`;
+            js += `  editingId = null;\n`;
+        }
+        js += `  document.getElementById('${fn}').reset();\n`;
+        js += `  ${lf}?.();\n`;
         js += `};\n\n`;
 
         if (isModalEdit) {
@@ -731,21 +869,22 @@ class CodeGenerator {
         } else {
             js += `async function edit${tableName}(id) {\n`;
             js += `  try {\n`;
-            js += `    var row = await (await fetch(API + '/' + id)).json();\n`;
+            js += `    let row = await (await fetch(API + '/' + id)).json();\n`;
             for (const f of fields) {
+                if (this._isAutoTimestampField(tableName, f.name)) continue;
                 const q = `'[name="${f.name}"]'`;
                 const isStatus = this._isStatusField(tableName, f.name);
                 const uiType = this._detectUiType(f, tableName);
                 if (isStatus && s.statusUiStyle === 'radio') {
-                    js += `    document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
+                    js += `    document.querySelectorAll(${q}).forEach(function(rb) { rb.checked = (rb.value == row.${f.name}); });\n`;
                 } else if (isStatus && s.statusUiStyle === 'toggle') {
                     js += `    var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == cb.value); cb.value = row.${f.name} || '${s.statusInactiveValue}'; }\n`;
                 } else if (uiType === 'select') {
                     js += `    var sel = document.querySelector(${q}); if (sel) { sel.value = row.${f.name} ?? ''; }\n`;
                 } else if (uiType === 'radio') {
-                    js += `    document.querySelectorAll(${q}).forEach(function(c) { c.checked = (c.value == row.${f.name}); });\n`;
+                    js += `    document.querySelectorAll(${q}).forEach(function(rb) { rb.checked = (rb.value == row.${f.name}); });\n`;
                 } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                    js += `    document.querySelectorAll('[data-field="${f.name}"]').forEach(function(c) { c.checked = (String(row.${f.name}).split(',').indexOf(c.value) !== -1); });\n`;
+                    js += `    document.querySelectorAll('[data-field="${f.name}"]').forEach(function(box) { box.checked = (String(row.${f.name}).split(',').indexOf(box.value) !== -1); });\n`;
                     js += `    var hv = document.getElementById('${f.name}Val'); if (hv) { hv.value = row.${f.name} ?? ''; }\n`;
                 } else if (uiType === 'checkbox') {
                     js += `    var cb = document.querySelector(${q}); if (cb) { cb.checked = (row.${f.name} == 1 || row.${f.name} === true); }\n`;
@@ -753,7 +892,7 @@ class CodeGenerator {
                     js += `    var el = document.querySelector(${q}); if (el) { el.value = row.${f.name} ?? ''; }\n`;
                 }
             }
-            js += `    eid = id;\n`;
+            js += `    editingId = id;\n`;
             js += `  } catch (err) { alert('Error: ' + err.message); }\n`;
             js += `}\n`;
         }
@@ -788,38 +927,54 @@ class CodeGenerator {
 
         let js = `const API = '${api}';\n`;
         js += `var data = [];\n`;
-        js += `var currentPage = 1;\n`;
-        js += `var searchQuery = '';\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            js += `var currentPage = 1;\n`;
+        }
+        if (s.showSearch) {
+            js += `var searchQuery = '';\n`;
+        }
         js += `var sortField = '${s.sortField}';\n`;
         js += `var sortDir = '${s.sortDir || 'asc'}';\n`;
-        js += `var pageSize = ${s.pageSize || 10};\n\n`;
-        js += `/* Required HTML:\n`;
-        js += `   <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)">\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            js += `var pageSize = ${s.pageSize || 10};\n`;
+        }
+        js += `\n/* Required HTML:\n`;
+        if (s.showSearch) {
+            js += `   <input type="search" id="search${tableName}" placeholder="Search ${tableName}..." oninput="search${tableName}(this.value)">\n`;
+        }
         js += `   <div id="${lid}">Loading...</div>\n`;
-        js += `   <div id="${pid}" style="display:flex;align-items:center;justify-content:center;gap:4px;"></div>\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            js += `   <div id="${pid}" style="display:flex;align-items:center;justify-content:center;gap:4px;"></div>\n`;
+        }
         js += `*/\n\n`;
         js += `async function load${tableName}() {\n`;
         js += `  var response = await fetch(API);\n`;
         js += `  data = await response.json();\n`;
-        js += `  currentPage = 1;\n`;
-        js += `  searchQuery = '';\n`;
-        js += `  var searchEl = document.getElementById('search${tableName}');\n`;
-        js += `  if (searchEl) {\n`;
-        js += `    searchEl.value = '';\n`;
-        js += `  }\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            js += `  currentPage = 1;\n`;
+        }
+        if (s.showSearch) {
+            js += `  searchQuery = '';\n`;
+            js += `  var searchEl = document.getElementById('search${tableName}');\n`;
+            js += `  if (searchEl) {\n`;
+            js += `    searchEl.value = '';\n`;
+            js += `  }\n`;
+        }
         js += `  render${tableName}();\n`;
         js += `}\n\n`;
         js += `function render${tableName}() {\n`;
         js += `  var items = data.slice();\n\n`;
-        js += `  // Search filter\n`;
-        js += `  if (searchQuery) {\n`;
-        js += `    var q = searchQuery.toLowerCase();\n`;
-        js += `    items = items.filter(function(item) {\n`;
-        js += `      return Object.values(item).some(function(value) {\n`;
-        js += `        return String(value).toLowerCase().includes(q);\n`;
-        js += `      });\n`;
-        js += `    });\n`;
-        js += `  }\n\n`;
+        if (s.showSearch) {
+            js += `  // Search filter\n`;
+            js += `  if (searchQuery) {\n`;
+            js += `    var q = searchQuery.toLowerCase();\n`;
+            js += `    items = items.filter(function(item) {\n`;
+            js += `      return Object.values(item).some(function(value) {\n`;
+            js += `        return String(value).toLowerCase().includes(q);\n`;
+            js += `      });\n`;
+            js += `    });\n`;
+            js += `  }\n\n`;
+        }
         js += `  // Sort\n`;
         js += `  if (sortField) {\n`;
         js += `    items.sort(function(a, b) {\n`;
@@ -834,59 +989,100 @@ class CodeGenerator {
         js += `      return sortDir === 'asc' ? result : -result;\n`;
         js += `    });\n`;
         js += `  }\n\n`;
-        js += `  var total = items.length;\n`;
-        js += `  var totalPages = Math.ceil(total / pageSize) || 1;\n`;
-        js += `  if (currentPage > totalPages) {\n`;
-        js += `    currentPage = totalPages;\n`;
-        js += `  }\n\n`;
         js += `  var list = document.getElementById('${lid}');\n\n`;
         js += `  // Empty state\n`;
-        js += `  if (total === 0) {\n`;
+        js += `  if (items.length === 0) {\n`;
         js += `    list.innerHTML = '<p>No ${tableName.toLowerCase()} yet.</p>';\n`;
-        js += `    document.getElementById('${pid}').innerHTML = '';\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            js += `    document.getElementById('${pid}').innerHTML = '';\n`;
+        }
         js += `    return;\n`;
         js += `  }\n\n`;
-        js += `  var pageItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);\n\n`;
-        js += `  // Render table\n`;
-        js += `  list.innerHTML = \`<table>\n`;
-        js += `    <tr>\n`;
-        js += `      ${headerCells}\n`;
-        js += `      <th data-field="__actions__">Actions</th>\n`;
-        js += `    </tr>\n`;
-        js += `    \${pageItems.map(function(item) {\n`;
-        js += `      return \`<tr>\n`;
-        js += `        ${cellRenderers}`;
-        if (statField) {
-            let actionsJs = `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
-            if (showDelete) {
-                actionsJs += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
-            }
-            actionsJs += `</td>\n      `;
-            js += actionsJs;
+        if (s.showPagination && s.pageSize > 0) {
+            js += `  var total = items.length;\n`;
+            js += `  var totalPages = Math.ceil(total / pageSize) || 1;\n`;
+            js += `  if (currentPage > totalPages) {\n`;
+            js += `    currentPage = totalPages;\n`;
+            js += `  }\n\n`;
+            js += `  var pageItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);\n\n`;
         } else {
-            js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button></td>\n      `;
+            js += `  var pageItems = items;\n\n`;
         }
-        js += `\`;\n`;
-        js += `    }).join('')}\n`;
-        js += `  </table>\`;\n\n`;
-        js += `  // Pagination controls\n`;
-        js += `  var p = '';\n`;
-        js += `  p += '<button onclick="goToPage${tableName}(1)">&laquo;</button>';\n`;
-        js += `  p += '<button onclick="goToPage${tableName}(' + (currentPage - 1) + ')"';\n`;
-        js += `  if (currentPage <= 1) p += ' disabled';\n`;
-        js += `  p += '>&lsaquo;</button>';\n`;
-        js += `  p += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + total + ')</span>';\n`;
-        js += `  p += '<button onclick="goToPage${tableName}(' + (currentPage + 1) + ')"';\n`;
-        js += `  if (currentPage >= totalPages) p += ' disabled';\n`;
-        js += `  p += '>&rsaquo;</button>';\n`;
-        js += `  p += '<button onclick="goToPage${tableName}(' + totalPages + ')">&raquo;</button>';\n`;
-        js += `  document.getElementById('${pid}').innerHTML = p;\n`;
+        js += `  // Render ${s.listStyle}\n`;
+        if (s.listStyle === 'card') {
+            js += `  list.innerHTML = \`<div class="card-grid">\n`;
+            js += `    \${pageItems.map(function(item) {\n`;
+            js += `      return \`<div class="card">\n`;
+            for (const f of fields) {
+                const label = f.name.charAt(0).toUpperCase() + f.name.slice(1);
+                if (f.options && f.options.length > 0) {
+                    const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
+                    js += `        <div class="card-field"><label>${label}</label><span>\${(${optMap})[item.${f.name}] || item.${f.name}}</span></div>\n`;
+                } else {
+                    js += `        <div class="card-field"><label>${label}</label><span>\${item.${f.name}}</span></div>\n`;
+                }
+            }
+            js += `        <div class="card-actions">\n`;
+            js += `          <button onclick="edit${tableName}(\${item.${pk}})">Edit</button>\n`;
+            if (statField) {
+                js += `          \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}\n`;
+                if (showDelete) {
+                    js += `          <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>\n`;
+                }
+            } else {
+                js += `          <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>\n`;
+            }
+            js += `        </div>\n`;
+            js += `      \`;\n`;
+            js += `    }).join('')}\n`;
+            js += `  </div>\`;\n\n`;
+        } else {
+            js += `  list.innerHTML = \`<table>\n`;
+            js += `    <tr>\n`;
+            js += `      ${headerCells}\n`;
+            js += `      <th data-field="__actions__">Actions</th>\n`;
+            js += `    </tr>\n`;
+            js += `    \${pageItems.map(function(item) {\n`;
+            js += `      return \`<tr>\n`;
+            js += `        ${cellRenderers}`;
+            if (statField) {
+                let actionsJs = `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
+                if (showDelete) {
+                    actionsJs += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
+                }
+                actionsJs += `</td>\n      `;
+                js += actionsJs;
+            } else {
+                js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button></td>\n      `;
+            }
+            js += `\`;\n`;
+            js += `    }).join('')}\n`;
+            js += `  </table>\`;\n\n`;
+        }
+        if (s.showPagination && s.pageSize > 0) {
+            js += `  // Pagination controls\n`;
+            js += `  var p = '';\n`;
+            js += `  p += '<button onclick="goToPage${tableName}(1)">&laquo;</button>';\n`;
+            js += `  p += '<button onclick="goToPage${tableName}(' + (currentPage - 1) + ')"';\n`;
+            js += `  if (currentPage <= 1) p += ' disabled';\n`;
+            js += `  p += '>&lsaquo;</button>';\n`;
+            js += `  p += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + total + ')</span>';\n`;
+            js += `  p += '<button onclick="goToPage${tableName}(' + (currentPage + 1) + ')"';\n`;
+            js += `  if (currentPage >= totalPages) p += ' disabled';\n`;
+            js += `  p += '>&rsaquo;</button>';\n`;
+            js += `  p += '<button onclick="goToPage${tableName}(' + totalPages + ')">&raquo;</button>';\n`;
+            js += `  document.getElementById('${pid}').innerHTML = p;\n`;
+        }
         js += `}\n\n`;
-        js += `function search${tableName}(query) {\n`;
-        js += `  searchQuery = query;\n`;
-        js += `  currentPage = 1;\n`;
-        js += `  render${tableName}();\n`;
-        js += `}\n\n`;
+        if (s.showSearch) {
+            js += `function search${tableName}(query) {\n`;
+            js += `  searchQuery = query;\n`;
+            if (s.showPagination && s.pageSize > 0) {
+                js += `  currentPage = 1;\n`;
+            }
+            js += `  render${tableName}();\n`;
+            js += `}\n\n`;
+        }
         js += `function sort${tableName}(field) {\n`;
         js += `  if (sortField === field) {\n`;
         js += `    sortDir = sortDir === 'asc' ? 'desc' : 'asc';\n`;
@@ -896,11 +1092,13 @@ class CodeGenerator {
         js += `  }\n`;
         js += `  render${tableName}();\n`;
         js += `}\n\n`;
-        js += `function goToPage${tableName}(page) {\n`;
-        js += `  if (page < 1 || page > Math.ceil(data.length / pageSize)) return;\n`;
-        js += `  currentPage = page;\n`;
-        js += `  render${tableName}();\n`;
-        js += `}\n\n`;
+        if (s.showPagination && s.pageSize > 0) {
+            js += `function goToPage${tableName}(page) {\n`;
+            js += `  if (page < 1 || page > Math.ceil(data.length / pageSize)) return;\n`;
+            js += `  currentPage = page;\n`;
+            js += `  render${tableName}();\n`;
+            js += `}\n\n`;
+        }
         if (s.showColumnVisibility) {
             js += `function toggleCol${tableName}(field, show) {\n`;
             js += `  var cells = document.querySelectorAll('#${lid} [data-field="' + field + '"]');\n`;
@@ -946,12 +1144,19 @@ class CodeGenerator {
                 }
             }
             if (f.notNull) line += ' NOT NULL';
+            if (f.unique) line += ' UNIQUE';
             if (f.default !== undefined) {
                 let defVal = String(f.default).replace(/;+$/, '').replace(/^['"]|['"]$/g, '');
-                if (f.type !== 'INTEGER' && f.type !== 'REAL') {
-                    defVal = `'${defVal}'`;
+                if (['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME'].includes(defVal.toUpperCase())) {
+                    line += ` DEFAULT ${defVal.toUpperCase()}`;
+                } else if (f.type !== 'INTEGER' && f.type !== 'REAL') {
+                    line += ` DEFAULT '${defVal}'`;
+                } else {
+                    line += ` DEFAULT ${defVal}`;
                 }
-                line += ` DEFAULT ${defVal}`;
+            }
+            if (f.check) {
+                line += ` CHECK (${f.check})`;
             }
             if (f.fk) {
                 line += ` REFERENCES ${f.fk.table}(${f.fk.field})`;
@@ -959,10 +1164,30 @@ class CodeGenerator {
             return line;
         });
 
+        // Add table-level constraints
+        const constraintLines = [];
+        if (table.constraints) {
+            for (const c of table.constraints) {
+                if (c.type === 'PRIMARY KEY') {
+                    constraintLines.push(`    PRIMARY KEY (${c.columns.join(', ')})`);
+                } else if (c.type === 'UNIQUE') {
+                    constraintLines.push(`    UNIQUE (${c.columns.join(', ')})`);
+                } else if (c.type === 'FOREIGN KEY') {
+                    const prefix = c.name ? `CONSTRAINT ${c.name} ` : '';
+                    constraintLines.push(`    ${prefix}FOREIGN KEY (${c.columns.join(', ')}) REFERENCES ${c.refTable}(${c.refColumns.join(', ')})`);
+                } else if (c.type === 'CHECK') {
+                    const prefix = c.name ? `CONSTRAINT ${c.name} ` : '';
+                    constraintLines.push(`    ${prefix}CHECK (${c.expr})`);
+                }
+            }
+        }
+
+        const allLines = fieldLines.concat(constraintLines);
+
         const sql = [
             `db.exec(\``,
             `  CREATE TABLE IF NOT EXISTS ${tableName} (`,
-            fieldLines.join(',\n'),
+            allLines.join(',\n'),
             `  )`,
             `\`);`,
             `console.log('Table ${tableName} is ready.');`

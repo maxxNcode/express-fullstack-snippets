@@ -15,6 +15,14 @@ class ServerManager {
 
             const args = ['-m', modelPath, '--port', String(port), '--ctx-size', '8192', '--n-gpu-layers', '0'];
 
+            let settled = false;
+            const done = (err) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                err ? reject(err) : resolve();
+            };
+
             this.process = spawn(serverPath, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
                 windowsHide: true
@@ -22,27 +30,29 @@ class ServerManager {
 
             this.process.stderr.on('data', (data) => {
                 const text = data.toString();
-                if (text.includes('model loaded') || text.includes('llama server listening')) {
-                    resolve();
+                if (text.includes('model loaded') || text.includes('llama server listening') || text.includes('server is listening')) {
+                    done();
                 }
             });
 
             this.process.on('error', (err) => {
                 this.process = null;
-                reject(new Error(`Failed to spawn llama-server: ${err.message}`));
+                done(new Error(`Failed to spawn llama-server: ${err.message}`));
             });
 
             this.process.on('exit', (code) => {
                 this.process = null;
+                done(new Error(`llama-server exited with code ${code} before becoming ready`));
             });
 
-            setTimeout(() => {
+            // A still-running process is not proof the model loaded, so time out as a failure
+            const timer = setTimeout(() => {
                 if (this.process) {
-                    resolve();
-                } else {
-                    reject(new Error('Server process exited before becoming ready'));
+                    this.process.kill('SIGTERM');
+                    this.process = null;
                 }
-            }, 10000);
+                done(new Error('Model did not finish loading within 60 seconds'));
+            }, 60000);
         });
     }
 

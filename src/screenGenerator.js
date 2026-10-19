@@ -114,6 +114,7 @@ class ScreenGenerator {
         h += '  </div>\n';
         h += '  <script>\n';
         h += '    function esc(str) { return String(str).replace(/&/g,\'&amp;\').replace(/</g,\'&lt;\').replace(/>/g,\'&gt;\').replace(/"/g,\'&quot;\'); }\n';
+        h += '    if (typeof authFetch === \'undefined\') { window.authFetch = function (u, o) { return fetch(u, o); }; }\n';
         h += '    const PAGE_CONFIG = ' + pageConfig + ';\n';
         h += '    const API_DATA = \'/api/\' + PAGE_CONFIG.name + \'/data\';\n';
         h += '    const API_SUBMIT = \'/api/\' + PAGE_CONFIG.name + \'/submit\';\n';
@@ -392,6 +393,7 @@ class ScreenGenerator {
         h += '  </div>\n';
         h += '  <script>\n';
         h += '    function esc(str) { return String(str).replace(/&/g,\'&amp;\').replace(/</g,\'&lt;\').replace(/>/g,\'&gt;\').replace(/"/g,\'&quot;\'); }\n';
+        h += '    if (typeof authFetch === \'undefined\') { window.authFetch = function (u, o) { return fetch(u, o); }; }\n';
         h += '    const PAGE_CONFIG = ' + pageConfig + ';\n';
         h += '    const API = \'/api/\' + PAGE_CONFIG.name;\n\n';
 
@@ -634,7 +636,7 @@ class ScreenGenerator {
         h += '<script>\n';
         h += '(async function() {\n';
         h += '  try {\n';
-        h += '    var res = await fetch(\'/api/widget/\' + \'' + screen.name + '\');\n';
+        h += '    var res = await (window.authFetch || fetch)(\'/api/widget/\' + \'' + screen.name + '\');\n';
         h += '    var data = await res.json();\n';
         h += '    var el = document.getElementById(\'widget_' + screen.name + '\');\n';
         h += '    if (el && data && data[0]) {\n';
@@ -738,9 +740,9 @@ class ScreenGenerator {
 
         var route = '';
         route += '// GET ' + screen.name + ' data\n';
-        route += 'app.get(\'/api/' + screen.name + '/data\', authenticate, (req, res) => {\n';
+        route += 'app.get(\'/api/' + screen.name + '/data\'' + (screen.auth === false ? '' : ', authenticate') + ', (req, res) => {\n';
         route += '  try {\n';
-        route += '    var stmt = db.prepare(\'' + sql.replace(/'/g, "\\'") + '\');\n';
+        route += '    var stmt = db.prepare(' + JSON.stringify(sql) + ');\n';
         route += '    var rows = stmt.all();\n';
         route += '    res.json(rows);\n';
         route += '  } catch (err) {\n';
