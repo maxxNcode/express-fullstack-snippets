@@ -1,14 +1,13 @@
-# Express Full-Stack Snippets
+# NODEJS EXPRESS WORKBENCH
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.2.2-blue.svg" alt="Version 3.2.2"/>
+  <img src="https://img.shields.io/badge/version-3.9.0-blue.svg" alt="Version 3.9.0"/>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/VS%20Code-1.74%2B-purple.svg" alt="VS Code 1.74+"/>
-  <img src="https://img.shields.io/badge/AI-Offline%20%7C%20GGUF-orange.svg" alt="Offline AI"/>
 </p>
 
 **The ultimate VS Code companion for building Express + SQLite full-stack applications.**  
-Includes **45+ schema-aware snippets**, inline code generation, and an **offline AI code assistant** — no internet connection required.
+Includes **45+ schema-aware snippets** and inline code generation.
 
 ---
 
@@ -16,8 +15,6 @@ Includes **45+ schema-aware snippets**, inline code generation, and an **offline
 
 - **45+ Production Snippets** — Express server setup, CRUD routes, JWT auth, bcrypt, CORS, file uploads, pagination, and more.
 - **Schema-Aware Dynamic Generation** — Register your database tables and instantly generate CRUD routes, HTML lists, forms, and full-page UIs tailored to your schema.
-- **Offline AI Assistant** — Built-in local AI using GGUF models. Turn it on, type `njs:make a route for users`, press Tab — code appears. No API keys, no cloud dependency.
-- **Inline Code Fixer** — Select broken code, press `Ctrl+Shift+F`, describe the fix — AI rewrites it in place.
 - **SQL Query Builder** — Interactive visual query builder with JOIN, GROUP BY, HAVING, aggregates, and SQL preview.
 - **Schema Visualizer** — Visualize your registered tables, columns, and foreign key relationships.
 - **Multi-Language Support** — Works in JavaScript, TypeScript, JSX/TSX, JSON, and HTML files.
@@ -30,12 +27,12 @@ Includes **45+ schema-aware snippets**, inline code generation, and an **offline
 
 1. Open VS Code -> Extensions sidebar (`Ctrl+Shift+X`)
 2. Click `...` (More Actions) -> **Install from VSIX...**
-3. Select `node-sqlite-snippets-3.2.2.vsix`
+3. Select `nodejs-express-workbench-3.9.0.vsix`
 4. Reload VS Code if prompted
 
 ### From VS Code Marketplace
 
-Search for **"Express Full-Stack Snippets"** in the Extensions panel and click Install.
+Search for **"NODEJS EXPRESS WORKBENCH"** in the Extensions panel and click Install.
 
 ---
 
@@ -52,6 +49,17 @@ Search for **"Express Full-Stack Snippets"** in the Extensions panel and click I
 node server.js
 #    Your REST API is live at http://localhost:3000
 ```
+
+### Whole project from a schema
+
+This is the fastest path when the clock is running:
+
+1. Paste your `CREATE TABLE` statements into any `.sql` or `.js` file, select them, and run **njs: Register this table** (MySQL dumps work too: **njs: Parse MySQL Schema**).
+2. Open **njs: Schema Visualizer** to set field UI types, save queries, and add transaction, report or widget screens.
+3. Run **njs: Generate Project Files**, or click **Generate Project** in the visualizer. It asks which table (if any) is used for login and which saved queries become report pages, then writes `server.js`, `package.json`, `.env` and `public/*.html`.
+4. Pick **npm install && npm start** from the prompt and open http://localhost:3000.
+
+When files already exist you choose between overwriting everything and writing only the missing ones, so you can regenerate after changing the schema without losing hand edits.
 
 ---
 
@@ -138,61 +146,6 @@ node server.js
 
 ---
 
-## Offline AI Code Assistant
-
-The extension includes a **fully offline** AI assistant powered by local GGUF models. No internet connection, no API keys, no external services.
-
-### AI Commands
-
-| Command | Shortcut | Description |
-|---------|----------|-------------|
-| **AI: Turn On** | `Ctrl+Shift+T` | Start AI with snippet names + descriptions as context |
-| **AI: Trained On** | -- | Start AI with full snippet body context for more accurate generation |
-| **AI: Turn Off** | -- | Stop the AI assistant |
-| **AI: Fix Selected Code** | `Ctrl+Shift+F` | Select code, run command, describe the fix -- AI rewrites it |
-| **njs:your instruction** | `Enter` then `Tab` | Type `njs:make a route for users` -> Enter -> Tab -> code appears |
-
-### How to Use AI
-
-1. **Turn on AI**: Run `AI: Turn On` or `AI: Trained On` from Command Palette
-2. **Generate code**: Type `njs:create a products table with name, price, stock` -> Enter -> Tab
-3. **Edit files**: Type `njs:in server.js add body-parser middleware` -> Enter -> Tab
-4. **Fix code**: Select code, press `Ctrl+Shift+F`, describe what to fix
-
-### AI Modes
-
-| Mode | Context | Best For |
-|------|---------|----------|
-| **Normal** (`AI: Turn On`) | Snippet names + descriptions | Lightweight, faster generation |
-| **Trained** (`AI: Trained On`) | All 45+ snippet bodies | AI writes exact snippet-style code |
-
-### Downloading AI Models
-
-Download a GGUF model and place it in the `models/` folder:
-
-| Model | Size | Quality | Download |
-|-------|------|---------|----------|
-| Qwen2.5-Coder-1.5B Q3_K_M | ~882 MB | Good | [HuggingFace](https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q3_k_m.gguf) |
-| Qwen2.5-Coder-1.5B Q4_0 | ~1017 MB | Better | [HuggingFace](https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_0.gguf) |
-| Qwen2.5-Coder-0.5B Q4_K_M | ~468 MB | Fair (faster) | [HuggingFace](https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf) |
-| DeepSeek-Coder-1.3B Q4_K_M | ~833 MB | Good | [HuggingFace](https://huggingface.co/TheBloke/deepseek-coder-1.3b-instruct-GGUF/resolve/main/deepseek-coder-1.3b-instruct.q4_k_m.gguf) |
-
-```bash
-# Example: download Qwen 1.5B (recommended)
-curl -L -o models/qwen2.5-coder-1.5b-instruct.q3_k_m.gguf \
-  "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q3_k_m.gguf"
-```
-
-After downloading, update the model path in `src/extension.js`:
-
-```js
-const modelPath = vscode.Uri.joinPath(context.extensionUri, 'models', 'YOUR_MODEL.gguf').fsPath;
-```
-
-> **Tip:** Bundle the model with your VSIX by placing it in `models/` before running `vsce package`.
-
----
-
 ## Schema Registry & Dynamic Generation
 
 Register your database tables and generate code automatically:
@@ -208,6 +161,23 @@ Register your database tables and generate code automatically:
 | `njs: Remove Foreign Key` | Remove foreign key relationships |
 | `njs: Schema Visualizer` | Open visual schema diagram |
 | `njs: Generate All Tables` | Generate all registered tables at once |
+| `njs: Generate Project Files` | Write a runnable server.js, package.json, .env and HTML pages from the schema |
+| `njs: Parse MySQL Schema` | Convert a MySQL CREATE TABLE dump to SQLite and register it |
+| `njs: Setup TailwindCSS` | Add Tailwind v4 to the current project |
+
+---
+
+## What's new in 3.9.0
+
+- **Generate Project Files** writes the whole app (server, login, CRUD pages, dashboard, screens) in one step, and the visualizer has a button for it.
+- The login setup you pick in the visualizer is saved in `.njs-schema.json` and reused by Generate Project.
+- Dashboard widgets get a working `/api/widget/<name>` route, and the dashboard links to every transaction and report screen.
+- Transaction screens honor the screen's login setting, and their data route no longer breaks on multi-line SQL.
+- Buttons in the visualizer insert into the last file you had open instead of failing with "Open a file first". With no file open they offer to create `server.js`.
+- **Modify Table Fields** keeps table settings and field UI types. Removing a table clears foreign keys that pointed at it.
+- `DEFAULT x CHECK(...)` in inline field specs now parses as two separate constraints.
+- The offline AI commands report a missing model or a load timeout instead of claiming success.
+- `njs:` line commands only fire in JS/TS/HTML/SQL/plain-text files.
 
 ---
 
@@ -215,7 +185,7 @@ Register your database tables and generate code automatically:
 
 - **VS Code** 1.74.0 or higher
 - **Node.js** 14.x or higher
-- **For AI**: A GGUF model file in `models/` directory (optional)
+
 
 ---
 
@@ -226,5 +196,5 @@ This project is licensed under the **MIT License**.
 ---
 
 <p align="center">
-  Made with love by <a href="https://github.com/maxxNcode">maxxNcode</a>
+  Made with love by <a href="https://github.com/weonlyliveonce">weonlyliveonce</a>
 </p>

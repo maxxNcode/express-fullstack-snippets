@@ -385,6 +385,125 @@ class RuleEngine {
     }
 
     /**
+     * Generate a SQL subquery expression for a formula like "Events.evRFee - Participants.parDRate".
+     * Resolves FK chains to build proper JOINs. The result can be used as a postAction setValue.
+     * @param {string} targetTable - The main table (e.g., 'Registration')
+     * @param {Array} operands - Array of { table, field } objects
+     * @param {string} operator - '+', '-', '*', '/'
+     * @returns {string} SQL subquery like "(SELECT e.evRFee - p.parDRate FROM Participants p JOIN Events e ON ... WHERE ...)"
+     */
+    generateFormulaSql(targetTable, operands, operator) {
+        if (!operands || operands.length < 2) return null;
+        if (!operator) operator = '-';
+
+        // Build alias map and resolve FK paths for each operand
+        const tables = this.schemaRegistry.getTables();
+        const tableObj = this.schemaRegistry.getTable(targetTable);
+        if (!tableObj) return null;
+
+        // Map table names to their aliases (first letter lowercase, unique)
+        const aliases = {};
+        const joins = [];
+        const usedAliases = new Set();
+
+        // Resolve FK path from targetTable to each operand's table
+        function resolvePath(fromTable, toTableName) {
+            if (fromTable === toTableName) return { path: [fromTable], alias: fromTable.toLowerCase()[0] };
+            
+            // BFS to find FK path
+            const queue = [{ table: fromTable, path: [fromTable] }];
+            const visited = new Set([fromTable]);
+            
+            while (queue.length > 0) {
+                const current = queue.shift();
+                const tbl = tables.includes(current.table) ? tables.find(t => t === current.table) : null;
+                if (!tbl) continue;
+                const tblObj = tables.map(t => this.schemaRegistry.getTable(t)).find(t => t && t.fields && t.fields.some(f => f.fk));
+                // Actually, let's just look up the table and follow FKs
+                const tableData = this.schemaRegistry.getTable(current.table);
+                if (!tableData || !tableData.fields) continue;
+
+                for (const f of tableData.fields) {
+                    if (f.fk && f.fk.table) {
+                        const nextTable = f.fk.table;
+                        if (nextTable === toTableName) {
+                            return { path: [...current.path, nextTable], fromField: f.name, toField: f.fk.field || 'id' };
+                        }
+                        if (!visited.has(nextTable)) {
+                            visited.add(nextTable);
+                            queue.push({ table: nextTable, path: [...current.path, nextTable], fromField: f.name, toField: f.fk.field });
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        const resolvedOperands = [];
+        for (const op of operands) {
+            if (op.table === targetTable) {
+                resolvedOperands.push({ alias: 'r', field: op.field });
+                if (!aliases[op.table]) {
+                    aliases[op.table] = 'r';
+                }
+            } else {
+                const path = resolvePath(targetTable, op.table);
+                if (!path) {
+                    resolvedOperands.push({ alias: '?', field: op.field });
+                    continue;
+                }
+                const alias = op.table.toLowerCase()[0];
+                // Ensure alias is unique
+                let finalAlias = alias;
+                let counter = 1;
+                while (usedAliases.has(finalAlias)) {
+                    finalAlias = alias + (counter++);
+                }
+                usedAliases.add(finalAlias);
+                aliases[op.table] = finalAlias;
+                resolvedOperands.push({ alias: finalAlias, field: op.field });
+
+                // Build JOIN path
+                const pathTables = path.path;
+                for (let i = 1; i < pathTables.length; i++) {
+                    const fromTbl = pathTables[i - 1];
+                    const toTbl = pathTables[i];
+                    const fromAlias = aliases[fromTbl] || fromTbl.toLowerCase()[0];
+                    const toAlias = aliases[toTbl] || toTbl.toLowerCase()[0];
+                    
+                    // Find FK from fromTbl to toTbl
+                    const fromTableData = this.schemaRegistry.getTable(fromTbl);
+                    if (!fromTableData || !fromTableData.fields) continue;
+                    
+                    for (const f of fromTableData.fields) {
+                        if (f.fk && f.fk.table === toTbl) {
+                            const joinKey = `${fromAlias}_${toAlias}`;
+                            if (!joins.find(j => j === joinKey)) {
+                                joins.push(joinKey);
+                                joins.push(`JOIN ${toTbl} ${toAlias} ON ${toAlias}.${f.fk.field} = ${fromAlias}.${f.name}`);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build the expression
+        const expr = resolvedOperands.map(o => `${o.alias}.${o.field}`).join(` ${operator} `);
+
+        // Generate the WHERE clause (link back to the target table's PK)
+        const pk = tableObj.fields.find(f => f.pk);
+        const whereField = pk ? `${aliases[targetTable] || targetTable.toLowerCase()[0]}.${pk.name}` : '1=1';
+
+        // Generate subquery
+        const joinClauses = joins.filter(j => j.startsWith('JOIN')).join('\n        ');
+        const sql = `(SELECT ${expr}\n  FROM ${targetTable} ${aliases[targetTable] || 'r'}\n  ${joinClauses}\n  WHERE ${whereField} = NEW.${pk ? pk.name : 'id'})`;
+
+        return sql;
+    }
+
+    /**
      * Expand a computed column expression into SQL.
      * Supports: percentage, runningTotal, rank, formula
      */

@@ -86,7 +86,7 @@ class SchemaRegistry {
         return this.schema.tables[name] || null;
     }
 
-    async addTable(name, fields) {
+    async addTable(name, fields, constraints) {
         if (this.schema.tables[name]) throw new Error(`Table "${name}" already exists`);
         const hasPk = fields.some(f => f.pk);
         if (!hasPk) {
@@ -97,7 +97,9 @@ class SchemaRegistry {
                 }
             }
         }
-        this.schema.tables[name] = { fields };
+        const table = { fields };
+        if (constraints && constraints.length > 0) table.constraints = constraints;
+        this.schema.tables[name] = table;
         await this.save();
     }
 
@@ -116,6 +118,33 @@ class SchemaRegistry {
 
     async removeTable(name) {
         delete this.schema.tables[name];
+        // Drop foreign keys that pointed at the removed table
+        for (const table of Object.values(this.schema.tables)) {
+            for (const f of table.fields) {
+                if (f.fk && f.fk.table === name) delete f.fk;
+            }
+        }
+        await this.save();
+    }
+
+    /**
+     * Replace a table's column definitions in place. Settings, constraints and
+     * per-field UI metadata (uiType, options, ...) of columns that keep their name survive.
+     */
+    async replaceTableFields(name, fields) {
+        const table = this.schema.tables[name];
+        if (!table) throw new Error(`Table "${name}" not found`);
+        const structural = ['name', 'type', 'pk', 'notNull', 'unique', 'default', 'check', 'fk', 'autoIncrement'];
+        const oldByName = new Map(table.fields.map(f => [f.name, f]));
+        table.fields = fields.map(f => {
+            const old = oldByName.get(f.name);
+            if (!old) return f;
+            const meta = {};
+            for (const [k, v] of Object.entries(old)) {
+                if (!structural.includes(k)) meta[k] = v;
+            }
+            return { ...meta, ...f };
+        });
         await this.save();
     }
 
@@ -240,6 +269,18 @@ class SchemaRegistry {
         await this.save();
     }
 
+    // --- Auth config (used by "Generate Project Files") ---
+
+    getAuthConfig() {
+        return this.schema.auth || null;
+    }
+
+    async setAuthConfig(config) {
+        if (config) this.schema.auth = config;
+        else delete this.schema.auth;
+        await this.save();
+    }
+
     // --- Action Routes management ---
 
     getActionRoutes() {
@@ -354,13 +395,20 @@ class SchemaRegistry {
         const columnsSection = tableMatch[2];
         const colDefs = this._splitSQLColumns(columnsSection);
         const fields = [];
+        const constraints = [];
 
         for (const colDef of colDefs) {
             const trimmed = colDef.trim();
             if (!trimmed) continue;
 
-            // Skip table-level constraints
-            if (/^(PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|INDEX|CONSTRAINT)\b/i.test(trimmed)) continue;
+            // Parse table-level constraints
+            if (/^(PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE(?:\s+(?:KEY|INDEX))?(?:\s+\w+)?\s*\(|CHECK\s*\(|CONSTRAINT)\b/i.test(trimmed)) {
+                const c = this._parseTableConstraint(trimmed);
+                if (c) constraints.push(c);
+                continue;
+            }
+            // Skip INDEX (MySQL-specific, no constraint in SQLite)
+            if (/^INDEX\b/i.test(trimmed)) continue;
 
             const tokens = this._tokenizeColumnDef(trimmed);
             if (tokens.length < 2) continue;
@@ -385,7 +433,6 @@ class SchemaRegistry {
                     i++;
                 } else if (t === 'DEFAULT') {
                     let dv = tokens[++i];
-                    // Strip surrounding single or double quotes
                     if ((dv.startsWith("'") && dv.endsWith("'")) || (dv.startsWith('"') && dv.endsWith('"'))) {
                         dv = dv.slice(1, -1);
                     }
@@ -397,6 +444,11 @@ class SchemaRegistry {
                     }
                 } else if (t === 'UNIQUE') {
                     field.unique = true;
+                } else if (/^CHECK\s*\(/i.test(tokens[i])) {
+                    const checkMatch = tokens[i].match(/^CHECK\s*\(\s*([\s\S]*?)\s*\)\s*$/i);
+                    if (checkMatch) {
+                        field.check = checkMatch[1];
+                    }
                 }
             }
 
@@ -407,7 +459,7 @@ class SchemaRegistry {
             throw new Error('No columns found in CREATE TABLE statement');
         }
 
-        return { tableName, fields };
+        return { tableName, fields, constraints: constraints.length > 0 ? constraints : undefined };
     }
 
     /**
@@ -467,6 +519,60 @@ class SchemaRegistry {
     }
 
     /**
+     * Parse a table-level constraint from a column definition string.
+     * Handles: PRIMARY KEY (...), UNIQUE (...), FOREIGN KEY (...) REFERENCES T(...),
+     * CHECK (...), and CONSTRAINT name ... variants.
+     */
+    _parseTableConstraint(def) {
+        let name = null;
+        let rest = def.trim();
+
+        // CONSTRAINT name ...
+        const cm = rest.match(/^CONSTRAINT\s+(\w+)\s+/i);
+        if (cm) {
+            name = cm[1];
+            rest = rest.substring(cm[0].length);
+        }
+
+        // PRIMARY KEY (col1, col2, ...)
+        let m = rest.match(/^PRIMARY\s+KEY\s*\(([^)]+)\)\s*$/i);
+        if (m) {
+            return { type: 'PRIMARY KEY', name, columns: m[1].split(',').map(s => s.trim().replace(/`/g, '')) };
+        }
+
+        // UNIQUE [KEY|INDEX] [index_name] (col1, col2, ...)
+        m = rest.match(/^UNIQUE(?:\s+(?:KEY|INDEX))?(?:\s+\w+)?\s*\(([^)]+)\)\s*$/i);
+        if (m) {
+            return { type: 'UNIQUE', name, columns: m[1].split(',').map(s => s.trim()) };
+        }
+
+        // FOREIGN KEY (col1, ...) REFERENCES Table(col1, ...)
+        m = rest.match(/^FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+(?:`?)(\w+)(?:`?)\s*\((?:`?)([^)`]+)(?:`?)\)\s*$/i);
+        if (m) {
+            return { type: 'FOREIGN KEY', name, columns: m[1].split(',').map(s => s.trim().replace(/`/g, '')), refTable: m[2].replace(/`/g, ''), refColumns: m[3].split(',').map(s => s.trim().replace(/`/g, '')) };
+        }
+
+        // CHECK (expr) — find matching paren
+        if (/^CHECK\s*\(/i.test(rest)) {
+            const startIdx = rest.indexOf('(');
+            let depth = 0;
+            let expr = '';
+            for (let k = startIdx + 1; k < rest.length; k++) {
+                if (rest[k] === '(') depth++;
+                else if (rest[k] === ')') {
+                    if (depth === 0) { expr = rest.substring(startIdx + 1, k); break; }
+                    depth--;
+                }
+            }
+            if (expr !== '') {
+                return { type: 'CHECK', name, expr: expr.trim() };
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Parse a MySQL CREATE TABLE statement into table name and field definitions.
      * Handles MySQL-specific syntax:
      *   - AUTO_INCREMENT
@@ -504,14 +610,20 @@ class SchemaRegistry {
         const colDefs = this._splitSQLColumns(columnsSection);
         const fields = [];
 
+        const constraints = [];
+
         for (const colDef of colDefs) {
             const trimmed = colDef.trim();
             if (!trimmed) continue;
 
-            // Skip table-level constraints (PRIMARY KEY, FOREIGN KEY, INDEX, UNIQUE KEY, KEY, CONSTRAINT, CHECK)
-            if (/^(PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE\s+(KEY|INDEX)?|INDEX|KEY|CONSTRAINT|CHECK|FULLTEXT|SPATIAL)\b/i.test(trimmed)) {
+            // Parse table-level constraints (including MySQL-specific UNIQUE KEY/INDEX, INDEX, KEY)
+            if (/^(PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE(?:\s+(?:KEY|INDEX))?(?:\s+\w+)?\s*\(|CHECK\s*\(|CONSTRAINT)\b/i.test(trimmed)) {
+                const c = this._parseTableConstraint(trimmed);
+                if (c) constraints.push(c);
                 continue;
             }
+            // Skip MySQL-only INDEX/KEY/FULLTEXT/SPATIAL (not real SQLite constraints)
+            if (/^(INDEX|KEY|FULLTEXT|SPATIAL)\b/i.test(trimmed)) continue;
 
             const tokens = this._tokenizeColumnDef(trimmed);
             if (tokens.length < 2) continue;
@@ -553,8 +665,8 @@ class SchemaRegistry {
                     let dv = tokens[++i];
                     if (dv.toUpperCase() === 'NULL') {
                         field.default = null;
-                    } else if (dv.toUpperCase() === 'CURRENT_TIMESTAMP') {
-                        field.default = 'CURRENT_TIMESTAMP';
+                    } else if (['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME'].includes(dv.toUpperCase())) {
+                        field.default = dv.toUpperCase();
                     } else {
                         if ((dv.startsWith("'") && dv.endsWith("'")) || (dv.startsWith('"') && dv.endsWith('"'))) {
                             dv = dv.slice(1, -1);
@@ -566,6 +678,14 @@ class SchemaRegistry {
                 // UNIQUE
                 if (t === 'UNIQUE') {
                     field.unique = true;
+                }
+
+                // CHECK (column-level)
+                if (/^CHECK\s*\(/i.test(tokens[i])) {
+                    const checkMatch = tokens[i].match(/^CHECK\s*\(\s*([\s\S]*?)\s*\)\s*$/i);
+                    if (checkMatch) {
+                        field.check = checkMatch[1];
+                    }
                 }
 
                 // REFERENCES (inline FK)
@@ -608,7 +728,7 @@ class SchemaRegistry {
             }
         }
 
-        return { tableName, fields, rawSql: sql };
+        return { tableName, fields, constraints: constraints.length > 0 ? constraints : undefined, rawSql: sql };
     }
 
     /**
@@ -742,8 +862,8 @@ class SchemaRegistry {
         let match;
         while ((match = createRegex.exec(sql)) !== null) {
             try {
-                const { tableName, fields } = this.parseMySqlCreateTable(match[0]);
-                tables.push({ tableName, fields });
+                const { tableName, fields, constraints } = this.parseMySqlCreateTable(match[0]);
+                tables.push({ tableName, fields, constraints });
             } catch (e) {
                 // Skip invalid CREATE TABLE statements
                 console.error('Failed to parse CREATE TABLE:', e.message);
@@ -759,14 +879,16 @@ class SchemaRegistry {
         const gen = new CodeGenerator(this);
 
         // Temporarily register tables to use the generator
-        for (const { tableName, fields } of tables) {
+        for (const { tableName, fields, constraints } of tables) {
             // Don't actually add to schema — just generate the SQL
             // We'll create a temporary schema context
             const tempSchema = {
                 getTable: (name) => {
                     const t = tables.find(t => t.tableName === name);
                     if (!t) return null;
-                    return { fields: t.fields };
+                    const result = { fields: t.fields };
+                    if (t.constraints) result.constraints = t.constraints;
+                    return result;
                 },
                 getTables: () => tables.map(t => t.tableName)
             };
@@ -832,12 +954,13 @@ class SchemaRegistry {
                 const t = tokens[i].toUpperCase();
                 if (t === 'PRIMARY') field.pk = true;
                 else if (t === 'NOT' && tokens[i + 1]?.toUpperCase() === 'NULL') { field.notNull = true; i++; }
+                else if (t === 'UNIQUE') field.unique = true;
                 else if (t === 'DEFAULT') {
                     let dvParts = [];
                     while (i + 1 < tokens.length) {
                         const next = tokens[i + 1];
                         const upper = next.toUpperCase();
-                        if (['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NOT', 'PRIMARY', 'DEFAULT'].includes(upper) || /^FK->/i.test(upper)) break;
+                        if (['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NOT', 'PRIMARY', 'DEFAULT', 'UNIQUE'].includes(upper) || /^FK->/i.test(upper) || /^CHECK\s*\(/i.test(next)) break;
                         dvParts.push(tokens[++i]);
                     }
                     let dv = dvParts.join(' ');
@@ -858,6 +981,18 @@ class SchemaRegistry {
                         this._validateFieldName(targetField, `FK target "${targetTable}"`);
                         field.fk = { table: targetTable, field: targetField };
                     }
+                } else if (/^CHECK\s*\(/i.test(tokens[i])) {
+                    let expr = tokens[i].replace(/^CHECK\s*\(\s*/i, '');
+                    let open = 0;
+                    let close = (tokens[i].match(/\)/g) || []).length;
+                    while (i + 1 < tokens.length && close <= open) {
+                        const nxt = tokens[++i];
+                        expr += ' ' + nxt;
+                        open += (nxt.match(/\(/g) || []).length;
+                        close += (nxt.match(/\)/g) || []).length;
+                    }
+                    expr = expr.replace(/\s*\)\s*$/, '');
+                    field.check = expr.trim();
                 } else if (['INTEGER', 'TEXT', 'REAL', 'BLOB'].includes(t)) {
                     field.type = t;
                 }

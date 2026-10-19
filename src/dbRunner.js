@@ -51,7 +51,7 @@ function _checkpointWal(dbPath) {
   if (process.platform === 'win32') {
     try {
       const result = execFileSync('where.exe', ['sqlite3'], { stdio: 'pipe', timeout: 5000, windowsHide: true });
-      const foundPath = result.stdout.toString().trim().split('\n')[0].trim();
+      const foundPath = result.toString().trim().split('\n')[0].trim();
       if (foundPath) {
         execFileSync(foundPath, [dbPath, 'PRAGMA wal_checkpoint(TRUNCATE);'], {
           stdio: 'pipe', timeout: 10000, windowsHide: true

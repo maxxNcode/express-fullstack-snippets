@@ -55,7 +55,7 @@ class Scaffer {
         const hasRules = !!(businessRules && businessRules.length > 0);
 
         files['server.js'] = this._generateServer(projectName, tableNames, authConfig, businessRules, reports, port);
-        files['package.json'] = this._generatePackageJson(projectName, hasAuth);
+        files['package.json'] = this._generatePackageJson(projectName, hasAuth, authConfig);
         files['.env'] = this._generateEnv(hasAuth, port);
         files['.gitignore'] = this._generateGitignore();
 
@@ -91,7 +91,7 @@ class Scaffer {
                 }));
                 const isCustomReport = !!report.columns; // Uses query generator
                 if (isCustomReport) {
-                    files[`public/${report.name}.html`] = this.codeGen.generateReportHtml(report.name, report.columns, cols, { title: report.title });
+                    files[`public/${report.name}.html`] = this.codeGen.queryGen.generateReportHtml(report.name, report.columns, cols, { title: report.title });
                 } else {
                     // Generic report using rule engine
                     files[`public/${report.name}.html`] = this.ruleEngine.generateReportHtml(report.name, cols);
@@ -116,7 +116,7 @@ class Scaffer {
                     if (actionRoute) {
                         const actionCode = this._generateActionRouteCode(actionRoute);
                         const submitRoute = actionCode.replace(
-                            `app.${actionRoute.method || 'POST'}('/api/${actionRoute.name}'`,
+                            `app.${(actionRoute.method || 'POST').toLowerCase()}('/api/${actionRoute.name}'`,
                             `app.post('/api/${screen.name}/submit'`
                         );
                         screenRoutes.push(submitRoute);
@@ -126,7 +126,7 @@ class Scaffer {
                     if (screen.query) {
                         const query = this.schemaRegistry.getQuery(screen.query);
                         if (query) {
-                            let reportRoute = this.codeGen.generateReportServer(screen.name, query.columns, null, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
+                            let reportRoute = this.codeGen.queryGen.generateReportServer(screen.name, query.columns, null, query.filters, query.sortBy, query.limit, query.groupBy, query.having, query.distinct, query.joinType);
                             if (screen.auth === false) {
                                 reportRoute = reportRoute.replace(', authenticate', '');
                             }
@@ -138,10 +138,31 @@ class Scaffer {
                     if (files['public/dashboard.html']) {
                         files['public/dashboard.html'] = files['public/dashboard.html'].replace('</div>\n</body>', widgetHtml + '\n</div>\n</body>');
                     }
+                    const widgetSql = this._widgetSql(screen);
+                    if (widgetSql) {
+                        const mw = screen.auth === false ? '' : ', authenticate';
+                        screenRoutes.push(
+                            `app.get('/api/widget/${screen.name}'${mw}, (req, res) => {\n` +
+                            `    try {\n` +
+                            `        res.json(db.prepare(${JSON.stringify(widgetSql)}).all());\n` +
+                            `    } catch (err) {\n` +
+                            `        res.status(500).json({ error: err.message });\n` +
+                            `    }\n` +
+                            `});`
+                        );
+                    }
                 }
             }
-            if (screenRoutes.length > 0 && serverCode.includes('// Error handling middleware')) {
-                serverCode = serverCode.replace('// Error handling middleware', screenRoutes.join('\n\n') + '\n\n// Error handling middleware');
+            const linked = screens.filter(s => s.type === 'transaction' || s.type === 'report');
+            if (linked.length > 0 && files['public/dashboard.html'] && files['public/dashboard.html'].includes('</div>\n</body>')) {
+                const links = linked.map(s =>
+                    `      <a href="/${s.name}.html" style="display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none">${this._escHtml(s.title || s.name)}</a>`
+                ).join('\n');
+                const section = `    <div class="screens-section" style="margin-top:24px">\n      <h2>Screens</h2>\n${links}\n    </div>\n`;
+                files['public/dashboard.html'] = files['public/dashboard.html'].replace('</div>\n</body>', section + '</div>\n</body>');
+            }
+            if (screenRoutes.length > 0 && serverCode.includes('// --- Default Route ---')) {
+                serverCode = serverCode.replace('// --- Default Route ---', '// ======================= Screen Routes =======================\n' + screenRoutes.join('\n\n') + '\n\n// --- Default Route ---');
             }
             files['server.js'] = serverCode;
         }
@@ -155,7 +176,7 @@ class Scaffer {
     _generateServer(projectName, tableNames, authConfig, businessRules, reports, port) {
         let code = '';
         code += '// ==========================================================\n';
-        code += '// ' + projectName + ' — Auto-generated by Express Full-Stack Snippets\n';
+        code += '// ' + projectName + ' — Auto-generated by NODEJS EXPRESS WORKBENCH\n';
         code += '// ==========================================================\n\n';
 
         // Imports
@@ -163,6 +184,7 @@ class Scaffer {
         code += 'const express = require("express");\n';
         code += 'const cors = require("cors");\n';
         code += 'const path = require("path");\n';
+        code += 'const fs = require("fs");\n';
         code += 'const Database = require("better-sqlite3");\n\n';
 
         code += 'const app = express();\n';
@@ -175,7 +197,9 @@ class Scaffer {
 
         // Database setup
         code += '// --- Database Setup ---\n';
-        code += 'const db = new Database(process.env.DB_PATH || "data/database.db");\n';
+        code += 'const DB_PATH = path.resolve(__dirname, process.env.DB_PATH || "data/database.db");\n';
+        code += 'fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });\n';
+        code += 'const db = new Database(DB_PATH);\n';
         code += 'db.pragma("journal_mode = WAL");\n';
         code += 'db.pragma("foreign_keys = ON");\n\n';
 
@@ -189,18 +213,20 @@ class Scaffer {
         const hasAuth = !!(authConfig && authConfig.tableName && authConfig.identityFields && authConfig.identityFields.length > 0 && authConfig.passwordField);
         const hasBcrypt = hasAuth;
         const useJwt = hasAuth;
+        const useRateLimiter = hasAuth && authConfig.useRateLimiter === true;
         if (hasAuth) {
-            // Need bcrypt for auth server code
-            code += 'const bcrypt = require("bcrypt");\n';
-            code += 'const jwt = require("jsonwebtoken");\n\n';
+            // Middleware first so every route below can reference `authenticate`
+            code += '// ======================= Auth Middleware =======================\n';
+            code += this.authGen.generateAuthMiddleware(authConfig.tableName, authConfig.identityFields, { useJwt: true, useRateLimiter, secretStorage: 'env' });
+            code += '\n\n';
+        } else {
+            code += '// --- No auth configured: routes stay public ---\n';
+            code += 'const authenticate = (req, res, next) => next();\n\n';
         }
 
         // Business rules middleware
         const hasRules = !!(businessRules && businessRules.length > 0);
         if (hasRules) {
-            if (useJwt) {
-                code += 'const jwt = require("jsonwebtoken");\n';
-            }
             code += this.ruleEngine.generateAll(businessRules, [{ method: 'POST', path: '/api/*', table: '*' }]);
             code += '\n';
         }
@@ -218,8 +244,6 @@ class Scaffer {
                 code += '\n\n';
             }
 
-            code += this.authGen.generateAuthMiddleware(authConfig.tableName, authConfig.identityFields, { useJwt: true });
-            code += '\n\n';
 
             code += '// --- Logout Endpoint ---\n';
             code += "app.post('/api/auth/logout', (req, res) => {\n";
@@ -229,6 +253,18 @@ class Scaffer {
             code += '    // In production, add token to a blacklist\n';
             code += '  }\n';
             code += "  res.json({ message: 'Logged out successfully' });\n";
+            code += '});\n\n';
+        }
+
+        // Passwords saved through the CRUD page must be hashed, or login can never match them
+        if (hasAuth && tableNames.includes(authConfig.tableName)) {
+            const pw = authConfig.passwordField;
+            code += '// --- Hash ' + authConfig.tableName + '.' + pw + ' on create/update ---\n';
+            code += "app.use('/api/" + authConfig.tableName.toLowerCase() + "', (req, res, next) => {\n";
+            code += "  if ((req.method === 'POST' || req.method === 'PUT') && req.body && req.body." + pw + " && !/^\\$2[aby]\\$/.test(String(req.body." + pw + "))) {\n";
+            code += '    req.body.' + pw + ' = bcrypt.hashSync(String(req.body.' + pw + '), 10);\n';
+            code += '  }\n';
+            code += '  next();\n';
             code += '});\n\n';
         }
 
@@ -248,7 +284,7 @@ class Scaffer {
             }
             code += '\n';
             for (const report of reports) {
-                code += this.codeGen.generateReportServer(report.name, report.columns, report.computedColumns, report.filters, report.sortBy, report.limit, report.groupBy, report.having, report.distinct, report.joinType);
+                code += this.codeGen.queryGen.generateReportServer(report.name, report.columns, report.computedColumns, report.filters, report.sortBy, report.limit, report.groupBy, report.having, report.distinct, report.joinType);
                 code += '\n\n';
             }
         }
@@ -272,22 +308,60 @@ class Scaffer {
         code += '  console.log(`' + projectName + ' running on http://localhost:${PORT}`);\n';
         code += '});\n';
 
-        return code;
+        return this._dedupeRequires(code);
+    }
+
+    /**
+     * Generated snippets each carry their own `const x = require(...)` lines.
+     * Keep the first declaration of each identifier so the file parses.
+     */
+    _dedupeRequires(code) {
+        const seen = new Set();
+        return code.split('\n').filter(line => {
+            const m = line.match(/^const\s+(\w+)\s*=\s*require\(/);
+            if (!m) return true;
+            if (seen.has(m[1])) return false;
+            seen.add(m[1]);
+            return true;
+        }).join('\n');
+    }
+
+    /**
+     * Resolve a widget's query to a single SELECT statement. The widget may
+     * reference a saved query by name or hold raw SQL typed in the editor.
+     */
+    _widgetSql(screen) {
+        if (!screen.query) return null;
+        let sql;
+        const saved = this.schemaRegistry.getQuery(screen.query);
+        if (saved) {
+            sql = this.codeGen.queryGen.generateQuerySql(saved.columns, saved.filters, saved.sortBy, saved.limit, saved.groupBy, saved.having, saved.distinct, saved.joinType);
+        } else {
+            sql = String(screen.query);
+        }
+        sql = sql.trim().replace(/;\s*$/, '');
+        if (!/^(select|with)\b/i.test(sql)) return null;
+        return sql;
+    }
+
+    _escHtml(str) {
+        return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
     /**
      * Generate package.json with all required dependencies.
      */
-    _generatePackageJson(projectName, hasAuth) {
+    _generatePackageJson(projectName, hasAuth, authConfig) {
         const deps = {
             'express': '^4.18.2',
-            'better-sqlite3': '^9.4.3',
+            'better-sqlite3': '^12.11.1',
             'cors': '^2.8.5',
             'dotenv': '^16.3.1'
         };
         if (hasAuth) {
             deps['jsonwebtoken'] = '^9.0.2';
             deps['bcrypt'] = '^5.1.1';
+            if (authConfig && authConfig.useRateLimiter === true) deps['express-rate-limit'] = '^7.5.0';
         }
 
         return JSON.stringify({
@@ -299,7 +373,9 @@ class Scaffer {
                 start: 'node server.js',
                 dev: 'node --watch server.js'
             },
-            dependencies: deps
+            dependencies: deps,
+            // npm 11+ skips native install scripts unless they are allowed here
+            allowScripts: Object.fromEntries(['better-sqlite3', 'bcrypt'].filter(d => deps[d]).map(d => [d, true]))
         }, null, 2);
     }
 
@@ -571,6 +647,7 @@ class Scaffer {
 
         for (let i = 0; i < fields.length; i++) {
             const f = fields[i];
+            if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
             const required = f.notNull ? ' required' : '';
             const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
             const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
@@ -636,7 +713,7 @@ class Scaffer {
                         for (const o of f.options) {
                             html += '            <label style="display:block;font-size:13px;"><input type="checkbox" data-field="' + f.name + '" value="' + o.value + '" onchange="update' + f.name + '()"> ' + o.label + '</label>\n';
                         }
-                        html += '            <script>function update' + f.name + '(){var a=[];document.querySelectorAll(\'[data-field="' + f.name + '"]:checked\').forEach(function(c){a.push(c.value)});document.getElementById(\'' + f.name + 'Val\').value=a.join(\',\')}<\/script>\n';
+                        html += '            <script>function update' + f.name + '(){var a=[];document.querySelectorAll(\'[data-field="' + f.name + '"]:checked\').forEach(function(box){a.push(box.value)});document.getElementById(\'' + f.name + 'Val\').value=a.join(\',\')}<\/script>\n';
                         html += '          </div>\n';
                     } else {
                         html += '          <div>\n';
@@ -712,7 +789,7 @@ class Scaffer {
 
         html += '        </div>\n';
         html += '        <div style="margin-top:12px;display:flex;gap:8px;">\n';
-        html += '          <button type="submit" class="btn-primary" id="saveBtn">Add Record</button>\n';
+        html += '          <button type="button" class="btn-primary" id="saveBtn">Add Record</button>\n';
         if (!isModalEdit) {
             html += '          <button type="button" class="btn-warning" id="cancelBtn" style="display:none;" onclick="cancelEdit()">Cancel</button>\n';
         }
@@ -771,7 +848,7 @@ class Scaffer {
             }
 
             html += '          <div style="display:flex;gap:8px;margin-top:12px;">\n';
-            html += '            <button type="submit" class="btn-primary">Save Changes</button>\n';
+            html += '            <button type="button" class="btn-primary" id="modalSaveBtn">Save Changes</button>\n';
             html += '            <button type="button" class="btn-warning" onclick="closeEditModal()">Cancel</button>\n';
             html += '          </div>\n';
             html += '        </form>\n';
@@ -782,25 +859,35 @@ class Scaffer {
         // Table card
         html += '    <div class="card">\n';
         html += '      <h2>' + displayName + ' Records</h2>\n';
-        html += '      <div class="search-bar">\n';
-        html += '        <input type="search" id="searchInput" placeholder="Search records..." oninput="searchRecords(this.value)">\n';
-        if (s.showColumnVisibility) {
-            html += '        <div style="position:relative;">\n';
-            html += '          <button type="button" class="btn-primary btn-sm" onclick="toggleColMenu()">Columns</button>\n';
-            html += '          <div id="colMenu" class="col-menu">\n';
-            for (const f of fields) {
-                const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                html += '            <label><input type="checkbox" data-field="' + f.name + '" checked onchange="toggleCol(\'' + f.name + '\', this.checked)"> ' + label + '</label>\n';
+        if (s.showSearch || s.showColumnVisibility) {
+            html += '      <div class="search-bar">\n';
+            if (s.showSearch) {
+                html += '        <input type="search" id="searchInput" placeholder="Search records..." oninput="searchRecords(this.value)">\n';
             }
-            html += '            <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol(\'__actions__\', this.checked)"> Actions</label>\n';
-            html += '          </div>\n';
-            html += '        </div>\n';
+            if (s.showColumnVisibility) {
+                html += '        <div style="position:relative;">\n';
+                html += '          <button type="button" class="btn-primary btn-sm" onclick="toggleColMenu()">Columns</button>\n';
+                html += '          <div id="colMenu" class="col-menu">\n';
+                for (const f of fields) {
+                    const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    html += '            <label><input type="checkbox" data-field="' + f.name + '" checked onchange="toggleCol(\'' + f.name + '\', this.checked)"> ' + label + '</label>\n';
+                }
+                html += '            <label><input type="checkbox" data-field="__actions__" checked onchange="toggleCol(\'__actions__\', this.checked)"> Actions</label>\n';
+                html += '          </div>\n';
+                html += '        </div>\n';
+            }
+            html += '      </div>\n';
         }
-        html += '      </div>\n';
+        if (s.listStyle === 'card') {
+            html += '      <style>.card-grid{display:flex;flex-wrap:wrap;gap:12px;}.card{border:1px solid;padding:16px;border-radius:8px;flex:1;min-width:280px;}.card-field{margin-bottom:8px;}.card-field label{display:block;font-weight:600;}.card-actions{margin-top:12px;display:flex;gap:8px;}</style>\n';
+        }
+        html += '      <!-- njs-list-style: ' + s.listStyle + ' -->\n';
         html += '      <div id="recordsTable">\n';
         html += '        <p style="color:#888;font-size:13px;">Loading...</p>\n';
         html += '      </div>\n';
-        html += '      <div id="paginationControls" style="display:flex;gap:4px;align-items:center;justify-content:center;margin-top:12px;"></div>\n';
+        if (s.showPagination && s.pageSize > 0) {
+            html += '      <div id="paginationControls" style="display:flex;gap:4px;align-items:center;justify-content:center;margin-top:12px;"></div>\n';
+        }
         html += '    </div>\n';
         html += '  </div>\n\n';
 
@@ -809,11 +896,13 @@ class Scaffer {
         html += '    const API = "' + api + '";\n';
         html += '    let editId = null;\n';
         html += '    let _allItems = [];\n';
-        html += '    let _currentPage = 1;\n';
         html += '    let _searchTerm = "";\n';
         html += '    let _sortField = "' + (s.sortField || '') + '";\n';
         html += '    let _sortDir = "' + (s.sortDir || 'asc') + '";\n';
-        html += '    const _pageSize = ' + (s.pageSize || 10) + ';\n';
+        if (s.showPagination && s.pageSize > 0) {
+            html += '    let _currentPage = 1;\n';
+            html += '    const _pageSize = ' + (s.pageSize || 10) + ';\n';
+        }
         if (hasAuth) {
             html += '    const _fetch = authFetch;\n';
         } else {
@@ -834,9 +923,11 @@ class Scaffer {
         html += '        const res = await _fetch(API);\n';
         html += '        if (!res.ok) throw new Error("Failed to load");\n';
         html += '        _allItems = await res.json();\n';
-        html += '        _currentPage = 1;\n';
+        if (s.showPagination && s.pageSize > 0) {
+            html += '        _currentPage = 1;\n';
+        }
         html += '        _searchTerm = "";\n';
-        html += "        document.getElementById('searchInput').value = '';\n";
+        html += "        var si = document.getElementById('searchInput'); if (si) si.value = '';\n";
         html += '        renderRecords();\n';
         html += '      } catch (err) {\n';
         html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + err.message + '</p>';\n";
@@ -859,69 +950,113 @@ class Scaffer {
         html += '          return _sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);\n';
         html += '        });\n';
         html += '      }\n';
-        html += '      var total = items.length;\n';
-        html += '      var totalPages = Math.ceil(total / _pageSize) || 1;\n';
-        html += '      if (_currentPage > totalPages) _currentPage = totalPages;\n';
-        html += '      var start = (_currentPage - 1) * _pageSize;\n';
-        html += '      var page = items.slice(start, start + _pageSize);\n';
         html += '      var container = document.getElementById("recordsTable");\n';
-        html += '      if (!total) {\n';
-        html += '        container.innerHTML = \'<p style="color:#888;padding:12px;text-align:center;">No records yet. Add one above.</p>\';\n';
-        html += "        document.getElementById('paginationControls').innerHTML = '';\n";
+        html += '      if (!items.length) {\n';
+        html += "        container.innerHTML = '<p style=\"color:#888;padding:12px;text-align:center;\">No records yet. Add one above.</p>';\n";
+        if (s.showPagination && s.pageSize > 0) {
+            html += "        document.getElementById('paginationControls').innerHTML = '';\n";
+        }
         html += '        return;\n';
         html += '      }\n';
-        html += '      var html = \'<table><thead><tr>\';\n';
-
-        for (const f of fields) {
-            const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            html += "      html += '<th onclick=\"sortRecords(\\'" + f.name + "\\')\" data-field=\"" + f.name + "\" style=\"cursor:pointer;user-select:none;\">" + label + "</th>';\n";
-        }
-        html += "      html += '<th data-field=\"__actions__\">Actions</th></tr></thead><tbody>';\n";
-
-        html += '      page.forEach(function(row) {\n';
-        html += "        html += '<tr>';\n";
-        for (const f of fields) {
-            const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-            if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
-                const active = s.statusActiveValue;
-                const inactive = s.statusInactiveValue;
-                html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
-            } else if (f.options && f.options.length > 0) {
-                const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
-                html += "        html += '<td data-field=\"" + f.name + "\">' + (" + optMap + "[row." + f.name + "] || (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '')) + '</td>';\n";
-            } else {
-                html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
-            }
-        }
-        html += "        html += '<td class=\"actions\" data-field=\"__actions__\">';\n";
-        html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
-        if (hasStat) {
-            html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(row." + pkName + ")\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ');\n";
-            if (showDelete) {
-                html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
-            }
+        if (s.showPagination && s.pageSize > 0) {
+            html += '      var total = items.length;\n';
+            html += '      var totalPages = Math.ceil(total / _pageSize) || 1;\n';
+            html += '      if (_currentPage > totalPages) _currentPage = totalPages;\n';
+            html += '      var start = (_currentPage - 1) * _pageSize;\n';
+            html += '      var page = items.slice(start, start + _pageSize);\n';
         } else {
-            html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+            html += '      var page = items;\n';
         }
-        html += "        html += '</td></tr>';\n";
-        html += '      });\n';
-        html += "      html += '</tbody></table>';\n";
+        html += "      console.log('njs: render " + tableName + " listStyle=" + s.listStyle + "');\n";
+        if (s.listStyle === 'card') {
+            html += '      var html = \'<div class="card-grid">\';\n';
+            html += '      page.forEach(function(row) {\n';
+            html += "        html += '<div class=\"card\">';\n";
+            for (const f of fields) {
+                const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
+                if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
+                    const active = s.statusActiveValue;
+                    const inactive = s.statusInactiveValue;
+                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</span></div>';\n";
+                } else if (f.options && f.options.length > 0) {
+                    const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
+                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + (" + optMap + "[row." + f.name + "] || (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '')) + '</span></div>';\n";
+                } else {
+                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</span></div>';\n";
+                }
+            }
+            html += "        html += '<div class=\"card-actions\">';\n";
+            html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
+            if (hasStat) {
+                html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(row." + pkName + ")\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ');\n";
+                if (showDelete) {
+                    html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
+                }
+            } else {
+                html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+            }
+            html += "        html += '</div>';\n";
+            html += "        html += '</div>';\n";
+            html += '      });\n';
+            html += "      html += '</div>';\n";
+        } else {
+            html += '      var html = \'<table><thead><tr>\';\n';
+            for (const f of fields) {
+                const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                html += "      html += '<th onclick=\"sortRecords(\\'" + f.name + "\\')\" data-field=\"" + f.name + "\" style=\"cursor:pointer;user-select:none;\">" + label + "</th>';\n";
+            }
+            html += "      html += '<th data-field=\"__actions__\">Actions</th></tr></thead><tbody>';\n";
+            html += '      page.forEach(function(row) {\n';
+            html += "        html += '<tr>';\n";
+            for (const f of fields) {
+                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
+                if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
+                    const active = s.statusActiveValue;
+                    const inactive = s.statusInactiveValue;
+                    html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
+                } else if (f.options && f.options.length > 0) {
+                    const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
+                    html += "        html += '<td data-field=\"" + f.name + "\">' + (" + optMap + "[row." + f.name + "] || (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '')) + '</td>';\n";
+                } else {
+                    html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
+                }
+            }
+            html += "        html += '<td class=\"actions\" data-field=\"__actions__\">';\n";
+            html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
+            if (hasStat) {
+                html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(row." + pkName + ")\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ');\n";
+                if (showDelete) {
+                    html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
+                }
+            } else {
+                html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+            }
+            html += "        html += '</td></tr>';\n";
+            html += '      });\n';
+            html += "      html += '</tbody></table>';\n";
+        }
         html += '      container.innerHTML = html;\n';
-        html += '      var pgHtml = "";\n';
-        html += "      pgHtml += '<button onclick=\"goToPage(1)\" class=\"pg-btn\">&laquo;</button>';\n";
-        html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage - 1) + ')\" class=\"pg-btn\"' + (_currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';\n";
-        html += "      pgHtml += '<span class=\"pg-info\">Page ' + _currentPage + ' of ' + totalPages + ' (' + total + ' total)</span>';\n";
-        html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage + 1) + ')\" class=\"pg-btn\"' + (_currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';\n";
-        html += "      pgHtml += '<button onclick=\"goToPage(' + totalPages + ')\" class=\"pg-btn\">&raquo;</button>';\n";
-        html += "      document.getElementById('paginationControls').innerHTML = pgHtml;\n";
+        if (s.showPagination && s.pageSize > 0) {
+            html += '      var pgHtml = "";\n';
+            html += "      pgHtml += '<button onclick=\"goToPage(1)\" class=\"pg-btn\">&laquo;</button>';\n";
+            html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage - 1) + ')\" class=\"pg-btn\"' + (_currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';\n";
+            html += "      pgHtml += '<span class=\"pg-info\">Page ' + _currentPage + ' of ' + totalPages + ' (' + total + ' total)</span>';\n";
+            html += "      pgHtml += '<button onclick=\"goToPage(' + (_currentPage + 1) + ')\" class=\"pg-btn\"' + (_currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';\n";
+            html += "      pgHtml += '<button onclick=\"goToPage(' + totalPages + ')\" class=\"pg-btn\">&raquo;</button>';\n";
+            html += "      document.getElementById('paginationControls').innerHTML = pgHtml;\n";
+        }
         html += '    }\n\n';
 
-        // Search
-        html += '    function searchRecords(term) {\n';
-        html += '      _searchTerm = term;\n';
-        html += '      _currentPage = 1;\n';
-        html += '      renderRecords();\n';
-        html += '    }\n\n';
+        if (s.showSearch) {
+            html += '    function searchRecords(term) {\n';
+            html += '      _searchTerm = term;\n';
+            if (s.showPagination && s.pageSize > 0) {
+                html += '      _currentPage = 1;\n';
+            }
+            html += '      renderRecords();\n';
+            html += '    }\n\n';
+        }
 
         // Sort
         html += '    function sortRecords(field) {\n';
@@ -935,11 +1070,13 @@ class Scaffer {
         html += '    }\n\n';
 
         // Go to page
-        html += '    function goToPage(page) {\n';
-        html += '      if (page < 1 || page > Math.ceil(_allItems.length / _pageSize)) return;\n';
-        html += '      _currentPage = page;\n';
-        html += '      renderRecords();\n';
-        html += '    }\n\n';
+        if (s.showPagination && s.pageSize > 0) {
+            html += '    function goToPage(page) {\n';
+            html += '      if (page < 1 || page > Math.ceil(_allItems.length / _pageSize)) return;\n';
+            html += '      _currentPage = page;\n';
+            html += '      renderRecords();\n';
+            html += '    }\n\n';
+        }
 
         if (s.showColumnVisibility) {
             // Column visibility
@@ -963,13 +1100,25 @@ class Scaffer {
             html += '    });\n\n';
         }
 
-        // Form submit handler (only creates when modal; also updates when inline)
-        html += "    document.getElementById('recordForm').onsubmit = async function(e) {\n";
-        html += '      e.preventDefault();\n';
-        html += "      const form = e.target;\n";
-        html += "      var fd = new FormData(form);\n";
-        html += "      form.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (cb.name && !cb.checked) fd.set(cb.name, '0'); });\n";
-        html += "      const data = Object.fromEntries(fd);\n";
+        // Form save handler
+        html += "    document.getElementById('saveBtn').onclick = async function() {\n";
+        html += "      let data = {\n";
+        for (const f of fields) {
+            if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
+            const uiType = this.codeGen._detectUiType(f, tableName);
+            if (uiType === 'checkbox' && f.options && f.options.length > 0) {
+                html += "        " + f.name + ": document.getElementById('" + f.name + "Val').value,\n";
+            } else if (uiType === 'radio') {
+                html += "        " + f.name + ": document.querySelector('[name=\\\"" + f.name + "\\\"]:checked')?.value || '',\n";
+            } else if (uiType === 'checkbox') {
+                html += "        " + f.name + ": document.querySelector('[name=\\\"" + f.name + "\\\"]').checked ? '1' : '0',\n";
+            } else {
+                html += "        " + f.name + ": document.querySelector('[name=\\\"" + f.name + "\\\"]').value,\n";
+            }
+        }
+        html += "      };\n";
+        html += "      let unchecked = document.getElementById('recordForm').querySelectorAll('input[type=checkbox]:not(:checked)');\n";
+        html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[checkbox.name] = '0'; });\n";
         html += "      const msg = document.getElementById('formMessage');\n";
         html += '      try {\n';
         if (isModalEdit) {
@@ -990,7 +1139,7 @@ class Scaffer {
             html += "          msg.innerHTML = '<div class=\\\"message message-success\\\">Record added successfully!</div>';\n";
             html += '        }\n';
         }
-        html += '        form.reset();\n';
+        html += '        document.getElementById(\'recordForm\').reset();\n';
         html += '        loadRecords();\n';
         html += "        setTimeout(function() { msg.innerHTML = ''; }, 3000);\n";
         html += '      } catch (err) {\n';
@@ -1003,6 +1152,7 @@ class Scaffer {
             html += '    function openEditModal(id, row) {\n';
             html += '      editId = id;\n';
             for (const f of fields) {
+                if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
                 const uiType = this.codeGen._detectUiType(f, tableName);
                 if (uiType === 'fk-select') {
@@ -1017,7 +1167,7 @@ class Scaffer {
                 } else if (uiType === 'radio') {
                     html += "      document.querySelectorAll('#editModalForm [name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value == row." + f.name + "); });\n";
                 } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                    html += "      document.querySelectorAll('#editModalForm [data-field=\\\"" + f.name + "\\\"]').forEach(function(c) { c.checked = (String(row." + f.name + ").split(',').indexOf(c.value) !== -1); }); update" + f.name + "();\n";
+                    html += "      document.querySelectorAll('#editModalForm [data-field=\\\"" + f.name + "\\\"]').forEach(function(box) { box.checked = (String(row." + f.name + ").split(',').indexOf(box.value) !== -1); }); update" + f.name + "();\n";
                 } else if (uiType === 'checkbox') {
                     html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {
@@ -1032,11 +1182,25 @@ class Scaffer {
             html += '      editId = null;\n';
             html += '    }\n\n';
 
-            html += "    document.getElementById('editModalForm').onsubmit = async function(e) {\n";
-            html += '      e.preventDefault();\n';
-            html += "      var fd = new FormData(e.target);\n";
-            html += "      e.target.querySelectorAll('input[type=checkbox]').forEach(function(cb) { if (cb.name && !cb.checked) fd.set(cb.name, '0'); });\n";
-            html += "      const data = Object.fromEntries(fd);\n";
+            html += "    document.getElementById('modalSaveBtn').onclick = async function() {\n";
+            html += "      let data = {\n";
+            for (const f of fields) {
+                if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
+                const uiType = this.codeGen._detectUiType(f, tableName);
+                if (uiType === 'checkbox' && f.options && f.options.length > 0) {
+                    html += "        " + f.name + ": document.getElementById('" + f.name + "Val').value,\n";
+                } else if (uiType === 'radio') {
+                    html += "        " + f.name + ": document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]:checked')?.value || '',\n";
+                } else if (uiType === 'checkbox') {
+                    html += "        " + f.name + ": document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]').checked ? '1' : '0',\n";
+                } else {
+                    html += "        " + f.name + ": document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]').value,\n";
+                }
+            }
+            html += "      };\n";
+            html += "      let unchecked = document.getElementById('editModalForm').querySelectorAll('input[type=checkbox]:not(:checked)');\n";
+html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[checkbox.name] = '0'; });\n";
+
             html += '      try {\n';
             html += "        await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
             html += '        closeEditModal();\n';
@@ -1092,6 +1256,7 @@ class Scaffer {
             html += '        const row = await res.json();\n';
             html += '        editId = id;\n';
             for (const f of fields) {
+                if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
                 const uiType = this.codeGen._detectUiType(f, tableName);
                 if (uiType === 'fk-select') {
@@ -1108,7 +1273,7 @@ class Scaffer {
                 } else if (uiType === 'radio') {
                     html += "        document.querySelectorAll('[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value == row." + f.name + "); });\n";
                 } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                    html += "        document.querySelectorAll('[data-field=\\\"" + f.name + "\\\"]').forEach(function(c) { c.checked = (String(row." + f.name + ").split(',').indexOf(c.value) !== -1); }); var hv = document.getElementById('" + f.name + "Val'); if (hv) hv.value = row." + f.name + " ?? '';\n";
+                    html += "        document.querySelectorAll('[data-field=\\\"" + f.name + "\\\"]').forEach(function(box) { box.checked = (String(row." + f.name + ").split(',').indexOf(box.value) !== -1); }); var hv = document.getElementById('" + f.name + "Val'); if (hv) hv.value = row." + f.name + " ?? '';\n";
                 } else if (uiType === 'checkbox') {
                     html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
                 } else {

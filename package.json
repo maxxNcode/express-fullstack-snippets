@@ -1,14 +1,14 @@
 {
-  "name": "node-sqlite-snippets",
-  "displayName": "Express Full-Stack Snippets",
-  "description": "The ultimate VS Code extension for Express + SQLite full-stack development. Includes 45+ schema-aware njs-snippets for CRUD, Auth, Security, Frontend & an offline AI code assistant (GGUF models).",
-  "version": "3.7.0",
-  "publisher": "maxxNcode",
+  "name": "nodejs-express-workbench",
+  "displayName": "NODEJS EXPRESS WORKBENCH",
+  "description": "The ultimate VS Code extension for Express + SQLite full-stack development. Includes 45+ schema-aware njs-snippets for CRUD, Auth, Security, Frontend.",
+  "version": "3.9.0",
+  "publisher": "weonlyliveonce",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/maxxNcode/express-fullstack-snippets.git"
+    "url": "https://github.com/weonlyliveonce/nodejs-express-workbench.git"
   },
   "engines": {
     "vscode": "^1.74.0"
@@ -78,8 +78,20 @@
         "title": "njs: Generate All Tables"
       },
       {
+        "command": "node-sqlite-ai.generateProject",
+        "title": "njs: Generate Project Files"
+      },
+      {
         "command": "node-sqlite-ai.tailwindSetup",
         "title": "njs: Setup TailwindCSS"
+      },
+      {
+        "command": "node-sqlite-ai.parseMysqlSchema",
+        "title": "njs: Parse MySQL Schema"
+      },
+      {
+        "command": "node-sqlite-ai.parseMysqlInsert",
+        "title": "njs: Parse MySQL Insert"
       }
     ],
     "keybindings": [
@@ -100,7 +112,7 @@
       }
     ],
     "configuration": {
-      "title": "Node SQLite AI",
+      "title": "NODEJS EXPRESS WORKBENCH",
       "properties": {
         "node-sqlite-ai.port": {
           "type": "number",
@@ -152,5 +164,8 @@
   },
   "dependencies": {
     "sql.js": "^1.14.1"
+  },
+  "scripts": {
+    "test": "node test/queryGenerator.test.js && node -r ./test/shim.js test/screenGenerator.test.js"
   }
 }

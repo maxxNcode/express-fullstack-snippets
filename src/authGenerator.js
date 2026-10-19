@@ -48,7 +48,11 @@ class AuthGenerator {
         }
 
         if (useBcrypt) {
-            code += `    const valid = await bcrypt.compare(${passwordField}, row.${passwordField});\n`;
+            code += `    // Rows seeded by hand may hold plain-text passwords; bcrypt hashes start with $2\n`;
+            code += `    const stored = String(row.${passwordField} || '');\n`;
+            code += `    const valid = /^\\$2[aby]\\$/.test(stored)\n`;
+            code += `      ? await bcrypt.compare(String(${passwordField}), stored)\n`;
+            code += `      : String(${passwordField}) === stored;\n`;
         } else {
             code += `    const valid = (${passwordField} === row.${passwordField});\n`;
         }
@@ -280,17 +284,6 @@ class AuthGenerator {
             html += '  <script src="auth.js"></script>\n';
             html += '  <script>redirectIfAuthenticated();</script>\n';
         }
-        html += '  <style>\n';
-        html += '    * { margin: 0; padding: 0; box-sizing: border-box; }\n';
-        html += '    body { font-family: -apple-system, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; }\n';
-        html += '    .auth-container { background: #fff; padding: 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }\n';
-        html += '    h2 { margin-bottom: 20px; color: #333; }\n';
-        html += '    input { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }\n';
-        html += '    button { width: 100%; padding: 10px; background: #0078d4; color: #fff; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; margin-top: 10px; }\n';
-        html += '    button:hover { background: #005a9e; }\n';
-        html += '    .error-message { margin-top: 10px; }\n';
-        html += '    .auth-link { display: block; text-align: center; margin-top: 16px; color: #666; }\n';
-        html += '  </style>\n';
         html += '</head>\n';
         html += '<body>\n';
         html += `<div class="auth-container">\n`;
@@ -392,17 +385,6 @@ class AuthGenerator {
             html += '  <script src="auth.js"></script>\n';
             html += '  <script>redirectIfAuthenticated();</script>\n';
         }
-        html += '  <style>\n';
-        html += '    * { margin: 0; padding: 0; box-sizing: border-box; }\n';
-        html += '    body { font-family: -apple-system, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; }\n';
-        html += '    .auth-container { background: #fff; padding: 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }\n';
-        html += '    h2 { margin-bottom: 20px; color: #333; }\n';
-        html += '    input, select { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }\n';
-        html += '    button { width: 100%; padding: 10px; background: #0078d4; color: #fff; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; margin-top: 10px; }\n';
-        html += '    button:hover { background: #005a9e; }\n';
-        html += '    .error-message { margin-top: 10px; }\n';
-        html += '    .auth-link { display: block; text-align: center; margin-top: 16px; color: #666; }\n';
-        html += '  </style>\n';
         html += '</head>\n';
         html += '<body>\n';
         html += `<div class="auth-container">\n`;
@@ -670,7 +652,9 @@ class AuthGenerator {
                 return f.name;
             }
         }
-        return null;
+        // Prefixed names common in exam schemas: voterPass, studPassword, userPwd
+        const loose = table.fields.find(f => /(pass|password|pwd)$/i.test(f.name));
+        return loose ? loose.name : null;
     }
 
     detectStatusField(table) {
