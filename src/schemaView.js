@@ -541,10 +541,9 @@ class SchemaViewProvider {
     }
 
     async _handleRemoveTable(tableName) {
-        const confirm = await vscode.window.showQuickPick(['Yes', 'No'], {
-            placeHolder: `Remove table "${tableName}" and all its fields?`
-        });
-        if (confirm !== 'Yes') return;
+        const confirm = await vscode.window.showWarningMessage(
+            `Remove table "${tableName}" and all its fields?`, { modal: true }, 'Remove');
+        if (confirm !== 'Remove') return;
 
         try {
             await this.schemaRegistry.removeTable(tableName);
@@ -1458,7 +1457,7 @@ class SchemaViewProvider {
             if (checkCount > 0) desc += ` | ${checkCount} checks`;
             if (actionCount > 0) desc += ` | ${actionCount} actions`;
             return `<div class="saved-rule-item">
-                <span><span class="sq-name" style="color:#6f6;">ROUTE</span><span class="sq-info">${this._escapeHtml(desc)}</span></span>
+                <span><span class="sq-name" style="color:var(--success);">ROUTE</span><span class="sq-info">${this._escapeHtml(desc)}</span></span>
                 <span class="sq-actions">
                     <button class="btn btn-danger btn-sm" onclick="removeActionRoute(${idx}, event)" title="Delete route">${this._svgCloseIcon()}</button>
                 </span>
@@ -1474,34 +1473,36 @@ class SchemaViewProvider {
 <link rel="stylesheet" href="${styleUri}" />
 </head>
 <body>
-    <div class="header">
-        <h1>Schema Visualizer</h1>
-        <div class="tab-bar">
-            <button class="tab-btn tab-active" onclick="switchTab('tables')" id="tabTables">Tables</button>
-            <button class="tab-btn" onclick="switchTab('queries')" id="tabQueries">Query Builder</button>
-            <button class="tab-btn" onclick="switchTab('rules')" id="tabRules">Rules</button>
-            <button class="tab-btn" onclick="switchTab('actions')" id="tabActions">Actions</button>
+    <header class="header">
+        <div class="header-top">
+            <h1>Schema Visualizer</h1>
+            <div class="header-actions">
+                <button class="btn btn-secondary" onclick="addTable()">${this._svgAddIcon()} Add Table</button>
+                <button class="btn btn-primary" onclick="generateProject()" ${hasTables ? '' : 'disabled'} title="Write server.js, package.json and all HTML pages into the workspace">
+                    ${this._svgGenerateIcon()} Generate Project
+                </button>
+                <details class="menu">
+                    <summary class="btn btn-secondary btn-icon" title="More actions" aria-label="More actions">&#x22EF;</summary>
+                    <div class="menu-list">
+                        <button onclick="generateAll()" ${hasTables ? '' : 'disabled'} title="Insert CREATE TABLE, prepared statements and CRUD routes for every table into the active editor">${this._svgGenerateIcon()} Insert code for all tables</button>
+                        <button onclick="regenAll()" ${hasTables ? '' : 'disabled'} title="Rewrite the generated blocks in the active editor to match the current schema">${this._svgRefreshIcon()} Update generated code</button>
+                        <button onclick="extractSchemaSql()" ${hasTables ? '' : 'disabled'} title="Copy every CREATE TABLE statement to the clipboard">${this._svgSqlIcon()} Copy schema SQL</button>
+                        <hr>
+                        <button onclick="refresh()">${this._svgRefreshIcon()} Reload view</button>
+                    </div>
+                </details>
+            </div>
+        </div>
+        <nav class="tab-bar" role="tablist">
+            <button class="tab-btn tab-active" onclick="switchTab('tables')" id="tabTables">Tables<span class="tab-count">${tables.length}</span></button>
+            <button class="tab-btn" onclick="switchTab('queries')" id="tabQueries">Queries<span class="tab-count">${queryNames.length}</span></button>
+            <button class="tab-btn" onclick="switchTab('screens')" id="tabScreens">Screens</button>
+            <button class="tab-btn" onclick="switchTab('rules')" id="tabRules">Rules<span class="tab-count">${rules.length}</span></button>
+            <button class="tab-btn" onclick="switchTab('actions')" id="tabActions">Actions<span class="tab-count">${actionRoutes.length}</span></button>
             <button class="tab-btn" onclick="switchTab('auth')" id="tabAuth">Auth</button>
             <button class="tab-btn" onclick="switchTab('quickstart')" id="tabQuickstart">Quick Start</button>
-            <button class="tab-btn" id="tabScreens" onclick="switchTab('screens')">Screens</button>
-        </div>
-        <div class="header-actions">
-            <button class="btn btn-primary" onclick="addTable()">${this._svgAddIcon()} Add Table</button>
-            <button class="btn btn-success" onclick="generateProject()" ${hasTables ? '' : 'disabled'} title="Write server.js, package.json and all HTML pages into the workspace">
-                ${this._svgGenerateIcon()} Generate Project
-            </button>
-            <button class="btn btn-success" onclick="generateAll()" ${hasTables ? '' : 'disabled'}>
-                ${this._svgGenerateIcon()} Generate All
-            </button>
-            <button class="btn btn-info" onclick="regenAll()" ${hasTables ? '' : 'disabled'}>
-                ${this._svgRefreshIcon()} Regen All
-            </button>
-            <button class="btn btn-secondary" onclick="extractSchemaSql()" ${hasTables ? '' : 'disabled'} title="Extract all CREATE TABLE SQL to clipboard">
-                ${this._svgSqlIcon()} Extract SQL
-            </button>
-            <button class="btn btn-secondary" onclick="refresh()">${this._svgRefreshIcon()} Refresh</button>
-        </div>
-    </div>
+        </nav>
+    </header>
 
     <div id="tabTablesContent" class="tab-content tab-active">
         ${hasTables ? `
@@ -1597,7 +1598,7 @@ class SchemaViewProvider {
         ${hasTables ? `
         <div class="rules-panel">
             <h3>${this._svgGenerateIcon()} Business Rules Engine</h3>
-            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+            <p class="panel-intro">
                 Define validation rules that run before/after database operations.
                 Rules enforce business logic like: "member must be active to book" or "auto-calculate total cost".
             </p>
@@ -1744,7 +1745,7 @@ class SchemaViewProvider {
         ${hasTables ? `
         <div class="rules-panel">
             <h3>${this._svgGenerateIcon()} Custom Action Routes</h3>
-            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+            <p class="panel-intro">
                 Define custom API routes with business logic (e.g., voting, booking, ordering).
                 These routes include authentication, pre-checks, inserts, and post-actions — all generated from a form.
             </p>
@@ -1789,7 +1790,7 @@ class SchemaViewProvider {
                         <option value="">— None —</option>
                         ${fkFieldsHtml}
                     </select>
-                    <span style="color:#555;font-size:11px;">Which field stores the logged-in user's ID?</span>
+                    <span class="hint">Which field stores the logged-in user's ID?</span>
                 </div>
 
                 <h4>Pre-Checks (validate before insert)</h4>
@@ -1828,7 +1829,7 @@ class SchemaViewProvider {
         ${hasTables ? `
         <div class="auth-panel">
             <h3>${this._svgGenerateIcon()} Auth Generator</h3>
-            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+            <p class="panel-intro">
                 Generate a login route for <strong>any</strong> registered table.
                 Pick which fields identify the user and which field holds the password.
             </p>
@@ -1865,61 +1866,61 @@ class SchemaViewProvider {
 
             <div class="auth-section" id="authOptionsSection" style="opacity:0.4;pointer-events:none;">
                 <label>Step 5: Output options</label>
-                <div style="margin-top:6px;padding:6px 8px;background:#0d1b1b;border:1px solid #1a3a3a;border-radius:4px;">
-                    <div style="color:#8cf;font-size:12px;font-weight:600;margin-bottom:4px;">MAIN</div>
+                <div style="margin-top:6px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;">
+                    <div style="color:var(--accent);font-size:12px;font-weight:600;margin-bottom:4px;">MAIN</div>
                     <div style="display:flex;flex-wrap:wrap;gap:8px;">
-                        <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <label class="qb-groupby-cb checked">
                             <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptRoute" />
                             <span>Login route (server)</span>
                         </label>
-                        <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <label class="qb-groupby-cb checked">
                             <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptBcrypt" />
                             <span>Use bcrypt</span>
                         </label>
-                        <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <label class="qb-groupby-cb checked">
                             <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptJwt" />
                             <span>Use JWT</span>
                         </label>
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                        <label for="authOptSecretStorage" style="color:#aaa;font-size:12px;">Secret storage:</label>
-                        <select id="authOptSecretStorage" onchange="onAuthOptionChange()" style="background:#1e1e1e;color:#ccc;border:1px solid #555;padding:3px 6px;border-radius:3px;font-size:12px;">
+                        <label for="authOptSecretStorage" style="color:var(--muted);font-size:12px;">Secret storage:</label>
+                        <select id="authOptSecretStorage" onchange="onAuthOptionChange()" style="background:var(--input-bg);color:var(--fg);border:1px solid var(--border);padding:3px 6px;border-radius:3px;font-size:12px;">
                             <option value="env">.env</option>
                             <option value="config">config.js</option>
                         </select>
                     </div>
                 </div>
-                <div style="margin-top:8px;padding:6px 8px;background:#111;border:1px solid #2a2a2a;border-radius:4px;">
-                    <div style="color:#aaa;font-size:12px;font-weight:600;margin-bottom:4px;">OPTIONAL</div>
+                <div style="margin-top:8px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;">
+                    <div style="color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px;">OPTIONAL</div>
                     <div style="display:flex;flex-wrap:wrap;gap:8px;">
-                        <label class="qb-groupby-cb" style="color:#888;">
+                        <label class="qb-groupby-cb">
                             <input type="checkbox" onchange="onAuthOptionChange()" id="authOptRegister" />
                             <span>Register route (server)</span>
                         </label>
-                        <label class="qb-groupby-cb" style="color:#888;">
+                        <label class="qb-groupby-cb">
                             <input type="checkbox" onchange="onAuthOptionChange()" id="authOptLogout" />
                             <span>Logout route (server)</span>
                         </label>
-                        <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <label class="qb-groupby-cb checked">
                             <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptHtml" />
                             <span>Login form HTML</span>
                         </label>
-                        <label class="qb-groupby-cb" style="color:#888;">
+                        <label class="qb-groupby-cb">
                             <input type="checkbox" onchange="onAuthOptionChange()" id="authOptRegisterHtml" />
                             <span>Register form HTML</span>
                         </label>
-                        <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <label class="qb-groupby-cb checked">
                             <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptRefreshToken" />
                             <span>Refresh Token</span>
                         </label>
-                        <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        <label class="qb-groupby-cb checked">
                             <input type="checkbox" checked onchange="onAuthOptionChange()" id="authOptRateLimiter" />
                             <span>Rate Limiter</span>
                         </label>
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                        <label for="authOptDbStorage" style="color:#aaa;font-size:12px;">DB path:</label>
-                        <select id="authOptDbStorage" onchange="onAuthOptionChange()" style="background:#1e1e1e;color:#ccc;border:1px solid #555;padding:3px 6px;border-radius:3px;font-size:12px;">
+                        <label for="authOptDbStorage" style="color:var(--muted);font-size:12px;">DB path:</label>
+                        <select id="authOptDbStorage" onchange="onAuthOptionChange()" style="background:var(--input-bg);color:var(--fg);border:1px solid var(--border);padding:3px 6px;border-radius:3px;font-size:12px;">
                             <option value="server">Server.js (hardcoded)</option>
                             <option value="env">.env</option>
                             <option value="config">config.js</option>
@@ -1955,7 +1956,7 @@ class SchemaViewProvider {
     <div id="tabQuickstartContent" class="tab-content">
         <div class="auth-panel">
             <h3>Quick App Generator</h3>
-            <p style="color:#888;font-size:12px;margin-bottom:14px;line-height:1.5;">
+            <p class="panel-intro">
                 Select tables, choose what to generate, and click one button.<br>
                 Works for <strong>any</strong> project.
             </p>
@@ -1966,7 +1967,7 @@ class SchemaViewProvider {
                     ${tables.map(t => {
                         const qsTable = this.schemaRegistry.getTable(t);
                         const qsFc = qsTable ? qsTable.fields.length : 0;
-                        return `<label class="auth-field-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                        return `<label class="auth-field-cb checked">
                             <input type="checkbox" checked onchange="onQsTableToggle('${this._jsStr(t)}', this.checked)" />
                             <span>${this._escapeHtml(t)}</span>
                             <span class="auth-cb-type">(${qsFc} fields)</span>
@@ -1978,44 +1979,44 @@ class SchemaViewProvider {
             <div class="auth-section">
                 <label>Step 2: What to generate</label>
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;">
-                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                    <label class="qb-groupby-cb checked">
                         <input type="checkbox" checked onchange="updateQsBtn()" id="qsOptCrud" />
                         <span>CRUD Routes (server)</span>
                     </label>
-                    <label class="qb-groupby-cb" style="color:#888;">
+                    <label class="qb-groupby-cb">
                         <input type="checkbox" onchange="updateQsBtn()" id="qsOptCreateTable" />
                         <span>CREATE TABLE SQL</span>
                     </label>
-                    <label class="qb-groupby-cb checked" style="border-color:#4fc3f7;background:#0d2a2a;color:#8cf;">
+                    <label class="qb-groupby-cb checked">
                         <input type="checkbox" checked onchange="updateQsBtn()" id="qsOptPage" />
                         <span>HTML Pages (form + list)</span>
                     </label>
-                    <label class="qb-groupby-cb" style="color:#888;">
+                    <label class="qb-groupby-cb">
                         <input type="checkbox" onchange="updateQsBtn()" id="qsOptBoilerplate" />
                         <span>Full HTML boilerplate</span>
                     </label>
                 </div>
             </div>
 
-            <div class="auth-section" style="border-top:1px solid #2a4a4a;padding-top:12px;">
+            <div class="auth-section" style="border-top:1px solid var(--border);padding-top:12px;">
                 <label>Optional: Include Auth</label>
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;align-items:center;">
-                    <label class="qb-groupby-cb" style="color:#888;">
+                    <label class="qb-groupby-cb">
                         <input type="checkbox" onchange="updateQsBtn()" id="qsEnableAuth" />
                         <span>Include login system</span>
                     </label>
-                    <span style="color:#555;font-size:11px;">(configure in Auth tab first)</span>
+                    <span class="hint">(configure in Auth tab first)</span>
                 </div>
             </div>
 
             <div class="auth-section">
                 <label>Optional: Include Business Rules</label>
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;align-items:center;">
-                    <label class="qb-groupby-cb" style="color:#888;">
+                    <label class="qb-groupby-cb">
                         <input type="checkbox" onchange="updateQsBtn()" id="qsEnableRules" />
                         <span>Include business rules</span>
                     </label>
-                    <span style="color:#555;font-size:11px;">(${rules.length} rule${rules.length !== 1 ? 's' : ''} defined in Rules tab)</span>
+                    <span class="hint">(${rules.length} rule${rules.length !== 1 ? 's' : ''} defined in Rules tab)</span>
                 </div>
             </div>
 
@@ -2035,22 +2036,22 @@ class SchemaViewProvider {
 
     <!-- Table Settings Modal -->
     <div id="tableSettingsOverlay" class="modal-overlay" style="display:none;" onclick="closeTableSettings(event)">
-        <div class="modal-content" onclick="event.stopPropagation()" style="background:#1e1e1e;border:1px solid #444;border-radius:6px;padding:14px 18px;max-width:480px;margin:40px auto;color:#ccc;font-size:13px;">
+        <div class="modal-content" onclick="event.stopPropagation()" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:14px 18px;max-width:480px;margin:40px auto;color:var(--fg);font-size:13px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <h3 id="tableSettingsTitle" style="margin:0;color:#eee;font-size:15px;">Table Settings</h3>
+                <h3 id="tableSettingsTitle" style="margin:0;color:var(--fg);font-size:15px;">Table Settings</h3>
                 <button class="btn btn-danger btn-sm" onclick="closeTableSettings()" title="Close">&times;</button>
             </div>
 
             <div style="margin-bottom:6px;">
-                <label style="font-weight:600;color:#ddd;display:block;margin-bottom:2px;">Status / Soft-delete field</label>
+                <label style="font-weight:600;color:var(--fg);display:block;margin-bottom:2px;">Status / Soft-delete field</label>
                 <select id="tsStatusField" style="width:100%;padding:3px 6px;font-size:12px;">
                     <option value="">Auto-detect (find any "stat" field)</option>
                     <option value="__none__">None — hard delete (DROP)</option>
                 </select>
             </div>
 
-            <div style="margin-bottom:6px;padding-left:10px;border-left:2px solid #444;">
-                <label style="font-weight:600;color:#ddd;display:block;margin-bottom:3px;">Status UI style</label>
+            <div style="margin-bottom:6px;padding-left:10px;border-left:2px solid var(--border);">
+                <label style="font-weight:600;color:var(--fg);display:block;margin-bottom:3px;">Status UI style</label>
                 <div style="display:flex;flex-wrap:wrap;gap:8px;">
                     <label style="font-size:12px;"><input type="radio" name="tsStatusUi" value="radio" checked /> Radio</label>
                     <label style="font-size:12px;"><input type="radio" name="tsStatusUi" value="dropdown" /> Dropdown</label>
@@ -2059,11 +2060,11 @@ class SchemaViewProvider {
                 </div>
                 <div style="display:flex;gap:8px;margin-top:4px;">
                     <div style="flex:1;">
-                        <label style="font-size:10px;color:#888;">Active value</label>
+                        <label style="font-size:10px;color:var(--muted);">Active value</label>
                         <input type="text" id="tsStatusActive" value="active" style="width:100%;padding:2px 6px;font-size:12px;" />
                     </div>
                     <div style="flex:1;">
-                        <label style="font-size:10px;color:#888;">Inactive value</label>
+                        <label style="font-size:10px;color:var(--muted);">Inactive value</label>
                         <input type="text" id="tsStatusInactive" value="inactive" style="width:100%;padding:2px 6px;font-size:12px;" />
                     </div>
                 </div>
@@ -2071,14 +2072,14 @@ class SchemaViewProvider {
 
             <div style="display:flex;gap:8px;margin-bottom:6px;">
                 <div style="flex:1;">
-                    <label style="font-weight:600;color:#ddd;display:block;margin-bottom:2px;">Edit method</label>
+                    <label style="font-weight:600;color:var(--fg);display:block;margin-bottom:2px;">Edit method</label>
                     <div style="display:flex;gap:10px;">
                         <label style="font-size:12px;"><input type="radio" name="tsEditMode" value="put" checked /> PUT</label>
                         <label style="font-size:12px;"><input type="radio" name="tsEditMode" value="patch" /> PATCH</label>
                     </div>
                 </div>
                 <div style="flex:1;">
-                    <label style="font-weight:600;color:#ddd;display:block;margin-bottom:2px;">Edit style</label>
+                    <label style="font-weight:600;color:var(--fg);display:block;margin-bottom:2px;">Edit style</label>
                     <div style="display:flex;gap:10px;">
                         <label style="font-size:12px;"><input type="radio" name="tsEditStyle" value="form" checked /> Inline</label>
                         <label style="font-size:12px;"><input type="radio" name="tsEditStyle" value="modal" /> Modal</label>
@@ -2089,30 +2090,30 @@ class SchemaViewProvider {
             <div style="margin-bottom:6px;">
                 <label style="display:flex;align-items:center;gap:6px;padding:2px 0;">
                     <input type="checkbox" id="tsShowDelete" />
-                    <span style="font-weight:500;color:#ddd;">Show "Delete" (hard-delete) button</span>
+                    <span style="font-weight:500;color:var(--fg);">Show "Delete" (hard-delete) button</span>
                 </label>
                 <div style="display:flex;gap:10px;padding:2px 0;">
-                    <label style="font-weight:500;color:#ddd;">List style:</label>
+                    <label style="font-weight:500;color:var(--fg);">List style:</label>
                     <label style="font-size:12px;"><input type="radio" name="tsListStyle" value="table" checked /> Table</label>
                     <label style="font-size:12px;"><input type="radio" name="tsListStyle" value="card" /> Card</label>
                 </div>
                 <label style="display:flex;align-items:center;gap:6px;padding:2px 0;">
                     <input type="checkbox" id="tsShowColumnVisibility" />
-                    <span style="font-weight:500;color:#ddd;">Show "Columns" dropdown (toggle visibility)</span>
+                    <span style="font-weight:500;color:var(--fg);">Show "Columns" dropdown (toggle visibility)</span>
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;padding:2px 0;">
                     <input type="checkbox" id="tsShowSearch" />
-                    <span style="font-weight:500;color:#ddd;">Show search bar (filter records)</span>
+                    <span style="font-weight:500;color:var(--fg);">Show search bar (filter records)</span>
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;padding:2px 0;">
                     <input type="checkbox" id="tsShowPagination" />
-                    <span style="font-weight:500;color:#ddd;">Enable pagination (page controls)</span>
+                    <span style="font-weight:500;color:var(--fg);">Enable pagination (page controls)</span>
                 </label>
             </div>
 
             <div style="display:flex;gap:8px;margin-bottom:6px;">
                 <div style="flex:1;">
-                    <label style="font-weight:600;color:#ddd;display:block;margin-bottom:2px;">Rows per page</label>
+                    <label style="font-weight:600;color:var(--fg);display:block;margin-bottom:2px;">Rows per page</label>
                     <select id="tsPageSize" style="width:100%;padding:2px 6px;font-size:12px;">
                         <option value="0">None (show all)</option>
                         <option value="5">5</option>
@@ -2123,7 +2124,7 @@ class SchemaViewProvider {
                     </select>
                 </div>
                 <div style="flex:2;">
-                    <label style="font-weight:600;color:#ddd;display:block;margin-bottom:2px;">Default sort</label>
+                    <label style="font-weight:600;color:var(--fg);display:block;margin-bottom:2px;">Default sort</label>
                     <div style="display:flex;gap:6px;">
                         <select id="tsSortField" style="flex:1;padding:2px 6px;font-size:12px;">
                             <option value="">None</option>
@@ -2280,6 +2281,9 @@ class SchemaViewProvider {
 
     async _handleRemoveScreen(name) {
         if (!this._panel) return;
+        const confirm = await vscode.window.showWarningMessage(
+            `Delete screen "${name}"?`, { modal: true }, 'Delete');
+        if (confirm !== 'Delete') return;
         try {
             await this.schemaRegistry.removeScreen(name);
             this._handleGetScreens();

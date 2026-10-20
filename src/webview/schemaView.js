@@ -1,6 +1,32 @@
 
         const vscode = acquireVsCodeApi();
 
+        // Merge into the persisted webview state instead of replacing it,
+        // so the active tab, auth choices and drafts don't erase each other.
+        function patchState(obj) {
+            var s = vscode.getState() || {};
+            Object.keys(obj).forEach(function(k) { s[k] = obj[k]; });
+            vscode.setState(s);
+        }
+
+        // Webviews block alert/confirm/prompt, so messages go to an in-page toast.
+        function notify(message, type) {
+            var host = document.getElementById('toastHost');
+            if (!host) {
+                host = document.createElement('div');
+                host.id = 'toastHost';
+                host.className = 'toast-host';
+                document.body.appendChild(host);
+            }
+            var el = document.createElement('div');
+            el.className = 'toast toast-' + (type || 'info');
+            el.setAttribute('role', 'status');
+            el.textContent = message;
+            host.appendChild(el);
+            setTimeout(function() { el.classList.add('toast-out'); }, 3200);
+            setTimeout(function() { el.remove(); }, 3500);
+        }
+
         function addTable() {
             vscode.postMessage({ command: 'addTable' });
         }
@@ -470,7 +496,7 @@
                 if (tableNames.indexOf(c.table) === -1) tableNames.push(c.table);
             });
             var tableCount = tableNames.length;
-            container.innerHTML = '<div style="font-size:11px;color:#666;margin-top:4px;">' + colCount + ' column' + (colCount !== 1 ? 's' : '') + ' selected from ' + tableCount + ' table' + (tableCount !== 1 ? 's' : '') + '</div>';
+            container.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-top:4px;">' + colCount + ' column' + (colCount !== 1 ? 's' : '') + ' selected from ' + tableCount + ' table' + (tableCount !== 1 ? 's' : '') + '</div>';
             document.querySelectorAll('.gen-query-btn').forEach(b => b.disabled = false);
             document.getElementById('saveBtn').disabled = false;
             if (addFilterBtn) addFilterBtn.disabled = false;
@@ -618,7 +644,7 @@
                             msg.results[0].columns.forEach(function(col) {
                                 var val = row[col];
                                 if (val === null || val === undefined) {
-                                    html += '<td><span style="color:#666;font-style:italic;">NULL</span></td>';
+                                    html += '<td><span style="color:var(--muted);font-style:italic;">NULL</span></td>';
                                 } else {
                                     var escaped = String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                                     html += '<td>' + escaped + '</td>';
@@ -701,7 +727,7 @@
                 screensState.actionRoutes = msg.actionRoutes;
                 renderScreensList();
             } else if (msg.command === 'screenError') {
-                alert('Error: ' + msg.error);
+                notify('Error: ' + msg.error, 'error');
             } else if (msg.command === 'screenPreviewResult') {
                 showScreenPreview(msg.screenName, msg.html);
             }
@@ -756,7 +782,7 @@
             const name = document.getElementById('queryName').value.trim();
             if (!name) {
                 document.getElementById('queryName').focus();
-                document.getElementById('queryName').style.borderColor = '#c03131';
+                document.getElementById('queryName').style.borderColor = 'var(--danger)';
                 setTimeout(() => document.getElementById('queryName').style.borderColor = '', 1500);
                 return;
             }
@@ -801,13 +827,7 @@
                 if (!btn) return;
                 var orig = btn.textContent;
                 btn.textContent = 'Copied!';
-                btn.style.background = '#0d7a3e';
-                btn.style.color = '#fff';
-                setTimeout(function() {
-                    btn.textContent = orig;
-                    btn.style.background = '';
-                    btn.style.color = '';
-                }, 1500);
+                setTimeout(function() { btn.textContent = orig; }, 1500);
             }).catch(function() {
                 // Fallback: select the text
                 ta.select();
@@ -866,9 +886,7 @@
             if (tabEl) tabEl.classList.add('tab-active');
             if (btnEl) btnEl.classList.add('tab-active');
             // Save active tab to state so it persists after refresh
-            var state = vscode.getState() || {};
-            state.activeTab = tabName;
-            vscode.setState(state);
+            patchState({ activeTab: tabName });
             if (tabName === 'screens') {
                 vscode.postMessage({ command: 'getScreens' });
             }
@@ -877,16 +895,31 @@
         // Restore active tab on page load
         (function restoreActiveTab() {
             var state = vscode.getState();
-            if (state && state.activeTab) {
-                setTimeout(function() { switchTab(state.activeTab); }, 50);
-            }
+            // The script runs at the end of <body>, so the DOM is ready and
+            // switching right away avoids a flash of the Tables tab.
+            if (state && state.activeTab) switchTab(state.activeTab);
         })();
+
+        // --- "More" menu: close on outside click, Escape, or after picking an item ---
+        document.addEventListener('click', function(e) {
+            document.querySelectorAll('details.menu[open]').forEach(function(menu) {
+                if (!menu.contains(e.target) || e.target.closest('.menu-list button')) {
+                    menu.removeAttribute('open');
+                }
+            });
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'Escape') return;
+            document.querySelectorAll('details.menu[open]').forEach(function(menu) {
+                menu.removeAttribute('open');
+            });
+        });
 
         // --- Auth Generator ---
         var authState = { table: null, identityFields: [], passwordField: null, statusField: null };
 
         function saveAuthState() {
-            vscode.setState({
+            patchState({
                 authTable: authState.table,
                 authIdentityFields: authState.identityFields,
                 authPasswordField: authState.passwordField,
@@ -1133,13 +1166,7 @@
                 if (!btn) return;
                 var orig = btn.textContent;
                 btn.textContent = 'Copied!';
-                btn.style.background = '#0d7a3e';
-                btn.style.color = '#fff';
-                setTimeout(function() {
-                    btn.textContent = orig;
-                    btn.style.background = '';
-                    btn.style.color = '';
-                }, 1500);
+                setTimeout(function() { btn.textContent = orig; }, 1500);
             }).catch(function() {
                 ta.select();
             });
@@ -1257,9 +1284,6 @@
                 var match = lbl.querySelector('input') ? (lbl.querySelector('input').getAttribute('onchange') || '').match(/onQsTableToggle\('([^']+)'/) : null;
                 if (match) qsTables.push(match[1]);
                 lbl.classList.add('checked');
-                lbl.style.borderColor = '#4fc3f7';
-                lbl.style.background = '#0d2a2a';
-                lbl.style.color = '#8cf';
             });
             updateQsBtn();
         }
@@ -1290,7 +1314,7 @@
             var rule = buildRule();
 
             if (!rule.targetTable) {
-                alert('Please fill in all required fields');
+                notify('Please fill in all required fields', 'error');
                 return;
             }
 
@@ -1375,7 +1399,7 @@
 
             var rule = buildRule();
             if (!rule.targetTable) {
-                alert('Please fill in all required fields');
+                notify('Please fill in all required fields', 'error');
                 return;
             }
 
@@ -1608,7 +1632,7 @@
             if (!form || form.style.display === 'none') return;
             try {
                 var draft = buildActionRoute();
-                vscode.setState({ actionRouteDraft: draft });
+                patchState({ actionRouteDraft: draft });
             } catch(e) { /* ignore */ }
         }
 
@@ -1713,11 +1737,11 @@
         function addActionRoute() {
             var route = buildActionRoute();
             if (!route.name || !route.targetTable) {
-                alert('Route name and target table are required');
+                notify('Route name and target table are required', 'error');
                 return;
             }
             vscode.postMessage({ command: 'addActionRoute', route: route });
-            vscode.setState({ actionRouteDraft: null });
+            patchState({ actionRouteDraft: null });
         }
 
         function removeActionRoute(index, event) {
@@ -1756,7 +1780,7 @@
             if (!container) return;
             var html = '';
             if (screensState.screens.length === 0) {
-                html = '<div style="text-align:center;padding:40px;color:#888;">No screens defined. Click "+ New Screen" to create one.</div>';
+                html = '<div style="text-align:center;padding:40px;color:var(--muted);">No screens defined. Click "+ New Screen" to create one.</div>';
             } else {
                 for (var i = 0; i < screensState.screens.length; i++) {
                     var s = screensState.screens[i];
@@ -1766,7 +1790,7 @@
                     html += '  <div class="screen-card-header">';
                     html += '    <span class="screen-card-type" style="background:' + color + '">' + s.type + '</span>';
                     html += '    <strong>' + (s.title || s.name) + '</strong>';
-                    html += '    <span style="color:#888;font-size:0.85em;margin-left:8px;">' + s.name + '</span>';
+                    html += '    <span style="color:var(--muted);font-size:0.85em;margin-left:8px;">' + s.name + '</span>';
                     html += '  </div>';
                     html += '  <div class="screen-card-actions">';
                     html += '    <button class="btn btn-sm btn-info" onclick="editScreen(\'' + s.name + '\')">Edit</button>';
@@ -2195,11 +2219,11 @@
         function saveScreenEditor(originalName) {
             var screen = collectScreenEditorFormData();
             if (!screen.name) {
-                alert('Screen name is required');
+                notify('Screen name is required', 'error');
                 return;
             }
             if (screen.display && screen.display.fields && screen.display.fields.length === 0 && screen.type === 'transaction') {
-                alert('At least one display field is required');
+                notify('At least one display field is required', 'error');
                 return;
             }
 
@@ -2213,9 +2237,8 @@
 
         function removeScreen(name, event) {
             if (event) event.stopPropagation();
-            if (confirm('Delete screen "' + name + '"?')) {
-                vscode.postMessage({ command: 'removeScreen', screenName: name });
-            }
+            // The extension asks for confirmation with a modal dialog.
+            vscode.postMessage({ command: 'removeScreen', screenName: name });
         }
 
         function previewScreen(name) {
@@ -2230,7 +2253,7 @@
                 '<h3>Preview: ' + name + '</h3>' +
                 '<button class="btn btn-sm btn-secondary" onclick="this.closest(\'.modal-overlay\').remove()">X</button>' +
                 '</div>' +
-                '<iframe style="width:100%;height:70vh;border:1px solid #ddd;border-radius:4px;" srcdoc="' + html.replace(/"/g, '&quot;').replace(/'/g, '&apos;') + '"></iframe>' +
+                '<iframe style="width:100%;height:70vh;border:1px solid var(--border);border-radius:4px;" srcdoc="' + html.replace(/"/g, '&quot;').replace(/'/g, '&apos;') + '"></iframe>' +
                 '</div>';
             document.body.appendChild(modal);
         }
