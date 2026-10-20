@@ -24,8 +24,8 @@ class CodeGenerator {
         return {
             statusField: raw.statusField || '',
             statusUiStyle: raw.statusUiStyle || 'radio',
-            statusActiveValue: raw.statusActiveValue || 'active',
-            statusInactiveValue: raw.statusInactiveValue || 'inactive',
+            statusActiveValue: String(raw.statusActiveValue ?? 'active'),
+            statusInactiveValue: String(raw.statusInactiveValue ?? 'inactive'),
             editMode: raw.editMode || 'put',
             showDeleteButton: raw.showDeleteButton !== false,
             editStyle: raw.editStyle || 'form',
@@ -106,7 +106,7 @@ class CodeGenerator {
         // Column order must match the .run() params in generateCrudRoutes: user fields first, then timestamps
         const { created, updated } = this._getAutoTimestampFields(tableName);
         const userCols = this.getNonPKFields(tableName).map(f => f.name).filter(n => n !== created?.name && n !== updated?.name);
-        const insertCols = userCols.concat(created ? [created.name] : [], updated ? [updated.name] : []);
+        const insertCols = (this._pkIsManual(tableName) ? [pk] : []).concat(userCols, created ? [created.name] : [], updated ? [updated.name] : []);
         const updateCols = userCols.concat(updated ? [updated.name] : []);
         const insertFields = insertCols.join(', ');
         const insertPlaceholders = insertCols.map(() => '?').join(', ');
@@ -149,7 +149,34 @@ class CodeGenerator {
         return " = '" + String(dv).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
     }
 
-    generateCrudRoutes(tableName) {
+    /** True when the PK is not an INTEGER rowid, so the client must supply it. */
+    _pkIsManual(tableName) {
+        const table = this.schemaRegistry.getTable(tableName);
+        const f = table && table.fields.find(x => x.pk);
+        return !!(f && String(f.type || '').toUpperCase() !== 'INTEGER');
+    }
+
+    _clientHelpers(tableName) {
+        function escapeCell(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+        function jsArgument(value) { return escapeCell(JSON.stringify(value)); }
+        async function checkedRequest(url, options) {
+            const response = await (typeof authFetch === 'function' ? authFetch : fetch)(url, options);
+            if (!response.ok) {
+                let error = {};
+                try { error = await response.json(); } catch (_) {}
+                throw new Error(error.error || ('Request failed (' + response.status + ')'));
+            }
+            return response;
+        }
+        return [escapeCell, jsArgument, checkedRequest].map(fn => fn.toString()).join('\n')
+            .replace(/\bescapeCell\b/g, '_escape' + tableName)
+            .replace(/\bjsArgument\b/g, '_arg' + tableName)
+            .replace(/\bcheckedRequest\b/g, '_request' + tableName) + '\n';
+    }
+
+    generateCrudRoutes(tableName, options = {}) {
         const table = this.schemaRegistry.getTable(tableName);
         if (!table) return '// Table not found';
         const pk = this.getPK(tableName);
@@ -186,7 +213,8 @@ class CodeGenerator {
         routes += `  }\n`;
         routes += `});\n\n`;
 
-        if (nonPK.length > 0) {
+        const manualPk = this._pkIsManual(tableName);
+        if (nonPK.length > 0 || manualPk) {
             routes += `// Create ${tableName}\n`;
             routes += `app.post('${listRoute}', (req, res) => {\n`;
             routes += `  try {\n`;
@@ -194,7 +222,10 @@ class CodeGenerator {
                 // Omitted fields fall back to the column DEFAULT instead of being saved as NULL
                 routes += `    const { ${userNonPK.map(f => f.name + this._jsDefault(f)).join(', ')} } = req.body;\n`;
             }
-            let insertParams = userNonPK.map(f => f.name).join(', ');
+            if (manualPk) {
+                routes += `    if (req.body.${pk} == null || req.body.${pk} === '') return res.status(400).json({ error: '${pk} is required' });\n`;
+            }
+            let insertParams = (manualPk ? [`req.body.${pk}`] : []).concat(userNonPK.map(f => f.name)).join(', ');
             if (autoCreated) {
                 if (insertParams) insertParams += ', ';
                 insertParams += `new Date().toISOString()`;
@@ -204,7 +235,9 @@ class CodeGenerator {
                 insertParams += `new Date().toISOString()`;
             }
             routes += `    const result = ${varPrefix}Insert.run(${insertParams});\n`;
-            routes += `    res.status(201).json({ ${pk}: result.lastInsertRowid });\n`;
+            routes += manualPk
+                ? `    res.status(201).json({ ${pk}: req.body.${pk} });\n`
+                : `    res.status(201).json({ ${pk}: result.lastInsertRowid });\n`;
             routes += `  } catch (err) {\n`;
             routes += `    res.status(500).json({ error: err.message });\n`;
             routes += `  }\n`;
@@ -216,8 +249,10 @@ class CodeGenerator {
             const updateMethod = this._getEditMode(tableName);
             routes += `app.${updateMethod}('${itemRoute}', (req, res) => {\n`;
             routes += `  try {\n`;
+            routes += `    const cur = ${varPrefix}GetOne.get(req.params.${pk});\n`;
+            routes += `    if (!cur) return res.status(404).json({ error: 'Not found' });\n`;
             if (userNonPK.length > 0) {
-                routes += `    const { ${userNonPK.map(f => f.name).join(', ')} } = req.body;\n`;
+                routes += `    const { ${userNonPK.map(f => `${f.name} = cur.${f.name}`).join(', ')} } = req.body;\n`;
             }
             let updateParams = userNonPK.map(f => f.name).join(', ');
             if (autoUpdated) {
@@ -274,6 +309,7 @@ class CodeGenerator {
             routes += `});\n`;
         }
 
+        if (options.withRules) routes = routes.replace(/const result = ([^\n]+\.run\([^\n]*\));/g, 'const result = _runWithRules(req, () => $1);');
         return routes;
     }
 
@@ -291,13 +327,14 @@ class CodeGenerator {
         const inactiveVal = statField ? s.statusInactiveValue : '';
         const showDelete = statField && s.showDeleteButton;
 
-        const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n        ');
-        const cellRenderers = fields.map(f => {
+        const displayFields = fields.filter(f => this._detectUiType(f, tableName) !== 'password');
+        const headerCells = displayFields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n        ');
+        const cellRenderers = displayFields.map(f => {
             if (f.options && f.options.length > 0) {
                 const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
-                return `<td data-field="${f.name}">\${(${optMap})[item.${f.name}] || item.${f.name}}</td>`;
+                return `<td data-field="${f.name}">\${_escape${tableName}((${optMap})[item.${f.name}] ?? item.${f.name})}</td>`;
             }
-            return `<td data-field="${f.name}">\${item.${f.name}}</td>`;
+            return `<td data-field="${f.name}">\${_escape${tableName}(item.${f.name})}</td>`;
         }).join('\n          ');
 
         let html = `<h2>${tableName}</h2>\n`;
@@ -397,7 +434,7 @@ class CodeGenerator {
                             for (const o of f.options) {
                                 html += `        <label><input type="checkbox" data-field="${f.name}" value="${o.value}" onchange="updateE${f.name}()"> ${o.label}</label><br>\n`;
                             }
-                            html += `        <script>function updateE${f.name}(){var a=[];document.querySelectorAll('#${mid} [data-field="${f.name}"]:checked').forEach(function(box){a.push(box.value)});document.getElementById('e${f.name}Val').value=a.join(',')}<\/script>\n`;
+                            html += `        <script>function updateE${f.name}(){var a=[];document.querySelectorAll('#${tableName.toLowerCase()}EditModal [data-field="${f.name}"]:checked').forEach(function(box){a.push(box.value)});document.getElementById('e${f.name}Val').value=a.join(',')}<\/script>\n`;
                             html += `      </div>\n`;
                         } else {
                             html += `      <label><input type="checkbox" name="${f.name}" value="1"${required}> ${label}</label>\n`;
@@ -441,7 +478,7 @@ class CodeGenerator {
                 html += `<script>\n`;
                 html += `(async function load${f.fk.table}() {\n`;
                 html += `  try {\n`;
-                html += `    const res = await fetch('/api/${f.fk.table.toLowerCase()}');\n`;
+                html += `    const res = await _request${tableName}('/api/${f.fk.table.toLowerCase()}');\n`;
                 html += `    const data = await res.json();\n`;
                 html += `    const sel = document.getElementById('${tableName.toLowerCase()}_${f.name}');\n`;
                 html += `    if (!sel) return;\n`;
@@ -458,6 +495,7 @@ class CodeGenerator {
         }
 
         html += `<script>\n`;
+        html += this._clientHelpers(tableName);
         html += `  const API = '${api}';\n`;
         html += `  var data = [];\n`;
         if (s.showPagination && s.pageSize > 0) {
@@ -470,7 +508,7 @@ class CodeGenerator {
         html += `  var sortField = '${s.sortField}';\n`;
         html += `  var sortDir = '${s.sortDir || 'asc'}';\n\n`;
         html += `  async function load${tableName}() {\n`;
-        html += `    var response = await fetch(API);\n`;
+        html += `    var response = await _request${tableName}(API);\n`;
         html += `    data = await response.json();\n`;
         if (s.showPagination && s.pageSize > 0) {
             html += `    currentPage = 1;\n`;
@@ -535,24 +573,24 @@ class CodeGenerator {
             html += `    list.innerHTML = \`<div class="card-grid">\n`;
             html += `      \${pageItems.map(function(item) {\n`;
             html += `        return \`<div class="card">\n`;
-            for (const f of fields) {
+            for (const f of displayFields) {
                 const label = f.name.charAt(0).toUpperCase() + f.name.slice(1);
                 if (f.options && f.options.length > 0) {
                     const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
-                    html += `          <div class="card-field"><label>${label}</label><span>\${(${optMap})[item.${f.name}] || item.${f.name}}</span></div>\n`;
+                    html += `          <div class="card-field"><label>${label}</label><span>\${_escape${tableName}((${optMap})[item.${f.name}] ?? item.${f.name})}</span></div>\n`;
                 } else {
-                    html += `          <div class="card-field"><label>${label}</label><span>\${item.${f.name}}</span></div>\n`;
+                    html += `          <div class="card-field"><label>${label}</label><span>\${_escape${tableName}(item.${f.name})}</span></div>\n`;
                 }
             }
             html += `          <div class="card-actions">\n`;
-            html += `            <button onclick="edit${tableName}(\${item.${pk}})">Edit</button>\n`;
+            html += `            <button onclick="edit${tableName}(\${_arg${tableName}(item.${pk})})">Edit</button>\n`;
             if (statField) {
-                html += `            \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}\n`;
+                html += `            \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${_arg${tableName}(item.${pk})})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${_arg${tableName}(item.${pk})})">Deactivate</button>\`}\n`;
                 if (showDelete) {
-                    html += `            <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>\n`;
+                    html += `            <button onclick="hardDelete${tableName}(\${_arg${tableName}(item.${pk})})">Delete</button>\n`;
                 }
             } else {
-                html += `            <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>\n`;
+                html += `            <button onclick="${actionFunc}${tableName}(\${_arg${tableName}(item.${pk})})">${actionLabel}</button>\n`;
             }
             html += `          </div>\n`;
             html += `        \`;\n`;
@@ -567,14 +605,14 @@ class CodeGenerator {
             html += `      \${pageItems.map(function(item) {\n`;
             html += `        return \`<tr>\n`;
             html += `          ${cellRenderers}`;
-            let actionsHtml = `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> `;
+            let actionsHtml = `\n          <td data-field="__actions__"><button onclick="edit${tableName}(\${_arg${tableName}(item.${pk})})">Edit</button> `;
             if (statField) {
-                actionsHtml += `\${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
+                actionsHtml += `\${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${_arg${tableName}(item.${pk})})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${_arg${tableName}(item.${pk})})">Deactivate</button>\`}`;
                 if (showDelete) {
-                    actionsHtml += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
+                    actionsHtml += ` <button onclick="hardDelete${tableName}(\${_arg${tableName}(item.${pk})})">Delete</button>`;
                 }
             } else {
-                actionsHtml += `<button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>`;
+                actionsHtml += `<button onclick="${actionFunc}${tableName}(\${_arg${tableName}(item.${pk})})">${actionLabel}</button>`;
             }
             actionsHtml += `</td>\n        `;
             html += actionsHtml;
@@ -646,8 +684,8 @@ class CodeGenerator {
             html += `  async function edit${tableName}(id) {\n`;
             html += `    editingId = id;\n`;
             html += `    try {\n`;
-            html += `      var row = await (await fetch(API + '/' + id)).json();\n`;
-            for (const f of fields) {
+            html += `      var row = await (await _request${tableName}(API + '/' + id)).json();\n`;
+            for (const f of displayFields) {
                 const q = `'#${mf} [name="${f.name}"]'`;
                 const isStatus = this._isStatusField(tableName, f.name);
                 const uiType = this._detectUiType(f, tableName);
@@ -677,20 +715,20 @@ class CodeGenerator {
             html += `    var d = Object.fromEntries(new FormData(e.target));\n`;
             html += `    document.querySelectorAll('#${mf} input[type=checkbox]:not(:checked)').forEach(function(checkbox) { if (!checkbox.name.endsWith('[]')) { d[checkbox.name] = '0'; } });\n`;
             html += `    try {\n`;
-            html += `      await fetch(API + '/' + editingId, { method: '${s.editMode.toUpperCase()}', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
+            html += `      await _request${tableName}(API + '/' + editingId, { method: '${s.editMode.toUpperCase()}', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });\n`;
             html += `      close${tableName}EditModal(); load${tableName}();\n`;
             html += `    } catch (err) { alert('Error: ' + err.message); }\n`;
             html += `  };\n\n`;
         }
 
-        html += `  async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
+        html += `  async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await _request${tableName}(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
 
         if (statField) {
-            html += `  async function activate${tableName}(id) { if (!confirm('Activate this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/activate', { method: 'PUT' }); load${tableName}(); }\n\n`;
+            html += `  async function activate${tableName}(id) { if (!confirm('Activate this ${tableName.toLowerCase()}?')) return; await _request${tableName}(API + '/' + id + '/activate', { method: 'PUT' }); load${tableName}(); }\n\n`;
         }
 
         if (showDelete) {
-            html += `  async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
+            html += `  async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await _request${tableName}(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
         }
 
         html += `  load${tableName}();\n`;
@@ -839,7 +877,7 @@ class CodeGenerator {
         const fn = tableName.toLowerCase() + 'Form';
         const lf = 'load' + tableName;
 
-        let js = `let editingId = null;\n\n`;
+        let js = this._clientHelpers(tableName) + `let editingId = null;\n\n`;
         js += `document.getElementById('saveBtn').onclick = async function() {\n`;
         js += `  let data = {\n`;
         for (const f of fields) {
@@ -859,11 +897,11 @@ class CodeGenerator {
         js += `  let unchecked = document.getElementById('${fn}').querySelectorAll('input[type=checkbox]:not(:checked)');\n`;
         js += `  unchecked.forEach(function(checkbox) { if (checkbox.name) data[checkbox.name] = '0'; });\n`;
         if (isModalEdit) {
-            js += `  await fetch('${api}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n`;
+            js += `  await _request${tableName}('${api}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n`;
         } else {
             js += `  let url = editingId ? '${api}/' + editingId : '${api}';\n`;
             js += `  let method = editingId ? '${editMode.toUpperCase()}' : 'POST';\n`;
-            js += `  await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n`;
+            js += `  await _request${tableName}(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n`;
             js += `  editingId = null;\n`;
         }
         js += `  document.getElementById('${fn}').reset();\n`;
@@ -875,7 +913,7 @@ class CodeGenerator {
         } else {
             js += `async function edit${tableName}(id) {\n`;
             js += `  try {\n`;
-            js += `    let row = await (await fetch(API + '/' + id)).json();\n`;
+            js += `    let row = await (await _request${tableName}(API + '/' + id)).json();\n`;
             for (const f of fields) {
                 if (this._isAutoTimestampField(tableName, f.name)) continue;
                 const q = `'[name="${f.name}"]'`;
@@ -919,19 +957,20 @@ class CodeGenerator {
         const inactiveVal = statField ? s.statusInactiveValue : '';
         const showDelete = statField && s.showDeleteButton;
 
-        const headerCells = fields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n      ');
-        const cellRenderers = fields.map(f => {
+        const displayFields = fields.filter(f => this._detectUiType(f, tableName) !== 'password');
+        const headerCells = displayFields.map(f => `<th onclick="sort${tableName}('${f.name}')" data-field="${f.name}">${f.name.charAt(0).toUpperCase() + f.name.slice(1)}</th>`).join('\n      ');
+        const cellRenderers = displayFields.map(f => {
             if (f.options && f.options.length > 0) {
                 const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
-                return `<td data-field="${f.name}">\${(${optMap})[item.${f.name}] || item.${f.name}}</td>`;
+                return `<td data-field="${f.name}">\${_escape${tableName}((${optMap})[item.${f.name}] ?? item.${f.name})}</td>`;
             }
-            return `<td data-field="${f.name}">\${item.${f.name}}</td>`;
+            return `<td data-field="${f.name}">\${_escape${tableName}(item.${f.name})}</td>`;
         }).join('\n        ');
 
         const lid = tableName.toLowerCase() + 'List';
         const pid = 'pagination' + tableName;
 
-        let js = `const API = '${api}';\n`;
+        let js = this._clientHelpers(tableName) + `const API = '${api}';\n`;
         js += `var data = [];\n`;
         if (s.showPagination && s.pageSize > 0) {
             js += `var currentPage = 1;\n`;
@@ -954,7 +993,7 @@ class CodeGenerator {
         }
         js += `*/\n\n`;
         js += `async function load${tableName}() {\n`;
-        js += `  var response = await fetch(API);\n`;
+        js += `  var response = await _request${tableName}(API);\n`;
         js += `  data = await response.json();\n`;
         if (s.showPagination && s.pageSize > 0) {
             js += `  currentPage = 1;\n`;
@@ -1019,24 +1058,24 @@ class CodeGenerator {
             js += `  list.innerHTML = \`<div class="card-grid">\n`;
             js += `    \${pageItems.map(function(item) {\n`;
             js += `      return \`<div class="card">\n`;
-            for (const f of fields) {
+            for (const f of displayFields) {
                 const label = f.name.charAt(0).toUpperCase() + f.name.slice(1);
                 if (f.options && f.options.length > 0) {
                     const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
-                    js += `        <div class="card-field"><label>${label}</label><span>\${(${optMap})[item.${f.name}] || item.${f.name}}</span></div>\n`;
+                    js += `        <div class="card-field"><label>${label}</label><span>\${_escape${tableName}((${optMap})[item.${f.name}] ?? item.${f.name})}</span></div>\n`;
                 } else {
-                    js += `        <div class="card-field"><label>${label}</label><span>\${item.${f.name}}</span></div>\n`;
+                    js += `        <div class="card-field"><label>${label}</label><span>\${_escape${tableName}(item.${f.name})}</span></div>\n`;
                 }
             }
             js += `        <div class="card-actions">\n`;
-            js += `          <button onclick="edit${tableName}(\${item.${pk}})">Edit</button>\n`;
+            js += `          <button onclick="edit${tableName}(\${_arg${tableName}(item.${pk})})">Edit</button>\n`;
             if (statField) {
-                js += `          \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}\n`;
+                js += `          \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${_arg${tableName}(item.${pk})})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${_arg${tableName}(item.${pk})})">Deactivate</button>\`}\n`;
                 if (showDelete) {
-                    js += `          <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>\n`;
+                    js += `          <button onclick="hardDelete${tableName}(\${_arg${tableName}(item.${pk})})">Delete</button>\n`;
                 }
             } else {
-                js += `          <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button>\n`;
+                js += `          <button onclick="${actionFunc}${tableName}(\${_arg${tableName}(item.${pk})})">${actionLabel}</button>\n`;
             }
             js += `        </div>\n`;
             js += `      \`;\n`;
@@ -1052,14 +1091,14 @@ class CodeGenerator {
             js += `      return \`<tr>\n`;
             js += `        ${cellRenderers}`;
             if (statField) {
-                let actionsJs = `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${item.${pk}})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${item.${pk}})">Deactivate</button>\`}`;
+                let actionsJs = `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${_arg${tableName}(item.${pk})})">Edit</button> \${item.${statField.name} === '${inactiveVal}' ? \`<button onclick="activate${tableName}(\${_arg${tableName}(item.${pk})})">Activate</button>\` : \`<button onclick="deactivate${tableName}(\${_arg${tableName}(item.${pk})})">Deactivate</button>\`}`;
                 if (showDelete) {
-                    actionsJs += ` <button onclick="hardDelete${tableName}(\${item.${pk}})">Delete</button>`;
+                    actionsJs += ` <button onclick="hardDelete${tableName}(\${_arg${tableName}(item.${pk})})">Delete</button>`;
                 }
                 actionsJs += `</td>\n      `;
                 js += actionsJs;
             } else {
-                js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${item.${pk}})">Edit</button> <button onclick="${actionFunc}${tableName}(\${item.${pk}})">${actionLabel}</button></td>\n      `;
+                js += `\n        <td data-field="__actions__"><button onclick="edit${tableName}(\${_arg${tableName}(item.${pk})})">Edit</button> <button onclick="${actionFunc}${tableName}(\${_arg${tableName}(item.${pk})})">${actionLabel}</button></td>\n      `;
             }
             js += `\`;\n`;
             js += `    }).join('')}\n`;
@@ -1113,12 +1152,12 @@ class CodeGenerator {
             js += `  });\n`;
             js += `}\n\n`;
         }
-        js += `async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
+        js += `async function ${actionFunc}${tableName}(id) { if (!confirm('${actionLabel} this ${tableName.toLowerCase()}?')) return; await _request${tableName}(API + '/' + id, { method: 'DELETE' }); load${tableName}(); }\n\n`;
         if (statField) {
-            js += `async function activate${tableName}(id) { if (!confirm('Activate this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/activate', { method: 'PUT' }); load${tableName}(); }\n\n`;
+            js += `async function activate${tableName}(id) { if (!confirm('Activate this ${tableName.toLowerCase()}?')) return; await _request${tableName}(API + '/' + id + '/activate', { method: 'PUT' }); load${tableName}(); }\n\n`;
         }
         if (showDelete) {
-            js += `async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await fetch(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
+            js += `async function hardDelete${tableName}(id) { if (!confirm('Permanently DELETE this ${tableName.toLowerCase()}?')) return; await _request${tableName}(API + '/' + id + '/delete', { method: 'POST' }); load${tableName}(); }\n\n`;
         }
         js += `load${tableName}();\n`;
         return js;
@@ -1156,7 +1195,7 @@ class CodeGenerator {
                 if (['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME'].includes(defVal.toUpperCase())) {
                     line += ` DEFAULT ${defVal.toUpperCase()}`;
                 } else if (f.type !== 'INTEGER' && f.type !== 'REAL') {
-                    line += ` DEFAULT '${defVal}'`;
+                    line += ` DEFAULT '${defVal.replace(/'/g, "''")}'`;
                 } else {
                     line += ` DEFAULT ${defVal}`;
                 }
@@ -1191,15 +1230,12 @@ class CodeGenerator {
         const allLines = fieldLines.concat(constraintLines);
 
         const sql = [
-            `db.exec(\``,
             `  CREATE TABLE IF NOT EXISTS ${tableName} (`,
             allLines.join(',\n'),
-            `  )`,
-            `\`);`,
-            `console.log('Table ${tableName} is ready.');`
+            `  )`
         ].join('\n');
 
-        return sql;
+        return 'db.exec(' + JSON.stringify(sql) + ');\n' + 'console.log(' + JSON.stringify(`Table ${tableName} is ready.`) + ');';
     }
 
     // --- Query Builder delegation to QueryGenerator ---

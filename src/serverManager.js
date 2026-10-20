@@ -1,9 +1,9 @@
 const { spawn } = require('child_process');
-const path = require('path');
 
 class ServerManager {
-    constructor() {
+    constructor(spawnProcess = spawn) {
         this.process = null;
+        this.spawnProcess = spawnProcess;
     }
 
     start(port, modelPath, serverPath) {
@@ -16,6 +16,7 @@ class ServerManager {
             const args = ['-m', modelPath, '--port', String(port), '--ctx-size', '8192', '--n-gpu-layers', '0'];
 
             let settled = false;
+            let timer;
             const done = (err) => {
                 if (settled) return;
                 settled = true;
@@ -23,32 +24,35 @@ class ServerManager {
                 err ? reject(err) : resolve();
             };
 
-            this.process = spawn(serverPath, args, {
+            const child = this.process = this.spawnProcess(serverPath, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
                 windowsHide: true
             });
 
-            this.process.stderr.on('data', (data) => {
-                const text = data.toString();
-                if (text.includes('model loaded') || text.includes('llama server listening') || text.includes('server is listening')) {
+            let log = '';
+            const onOutput = (data) => {
+                log = (log + data.toString()).slice(-4096);
+                if (log.includes('llama server listening') || log.includes('server is listening')) {
                     done();
                 }
-            });
+            };
+            child.stdout.on('data', onOutput);
+            child.stderr.on('data', onOutput);
 
-            this.process.on('error', (err) => {
-                this.process = null;
+            child.on('error', (err) => {
+                if (this.process === child) this.process = null;
                 done(new Error(`Failed to spawn llama-server: ${err.message}`));
             });
 
-            this.process.on('exit', (code) => {
-                this.process = null;
+            child.on('exit', (code) => {
+                if (this.process === child) this.process = null;
                 done(new Error(`llama-server exited with code ${code} before becoming ready`));
             });
 
             // A still-running process is not proof the model loaded, so time out as a failure
-            const timer = setTimeout(() => {
-                if (this.process) {
-                    this.process.kill('SIGTERM');
+            timer = setTimeout(() => {
+                if (this.process === child) {
+                    child.kill('SIGTERM');
                     this.process = null;
                 }
                 done(new Error('Model did not finish loading within 60 seconds'));

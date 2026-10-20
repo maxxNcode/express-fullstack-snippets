@@ -1,7 +1,7 @@
 # NODEJS EXPRESS WORKBENCH
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.9.0-blue.svg" alt="Version 3.9.0"/>
+  <img src="https://img.shields.io/badge/version-3.9.3-blue.svg" alt="Version 3.9.3"/>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/VS%20Code-1.74%2B-purple.svg" alt="VS Code 1.74+"/>
 </p>
@@ -27,7 +27,7 @@ Includes **45+ schema-aware snippets** and inline code generation.
 
 1. Open VS Code -> Extensions sidebar (`Ctrl+Shift+X`)
 2. Click `...` (More Actions) -> **Install from VSIX...**
-3. Select `nodejs-express-workbench-3.9.0.vsix`
+3. Select `nodejs-express-workbench-3.9.3.vsix`
 4. Reload VS Code if prompted
 
 ### From VS Code Marketplace
@@ -167,6 +167,16 @@ Register your database tables and generate code automatically:
 
 ---
 
+## What's new in 3.9.3
+
+- Generated CRUD APIs require authentication when login is configured and omit the login table's password hashes. New projects receive random JWT secrets.
+- Edit/action buttons support text primary keys. Modal and inline forms preserve checkbox, radio, select and FK values, and report rejected saves.
+- Business checks and post-actions run on their configured CRUD operations. Writes and post-actions share a transaction; action routes also roll back on failure.
+- Report pages resolve SQL aliases, escape displayed values and work in projects without login. SQL strings and seed tuples preserve quoted punctuation.
+- Registration validates required fields, keeps schema defaults, and generates a working endpoint when its page is enabled. Successful login upgrades seeded plaintext passwords to bcrypt.
+- Missing dependency checks run on JS/TS saves (prompt, auto or off), with a manual command. Literal strings and template text are excluded from scanning.
+- Local AI readiness is detected from stdout or stderr. Schema commands wait for initial loading.
+
 ## What's new in 3.9.0
 
 - **Generate Project Files** writes the whole app (server, login, CRUD pages, dashboard, screens) in one step, and the visualizer has a button for it.
@@ -184,7 +194,22 @@ Register your database tables and generate code automatically:
 ## Requirements
 
 - **VS Code** 1.74.0 or higher
-- **Node.js** 14.x or higher
+- **Node.js** 22.x or higher for generated applications
+
+## Development checks
+
+Run `npm install` and `npm test` for the regression suite. It parses generated server/client scripts and executes SQL formula and FK dropdown regressions.
+
+The HTTP and DOM integration test uses a generated application's installed dependencies plus `jsdom`. In that generated project, run `npm install` and `npm install --no-save jsdom`. Then run this from the extension repository in PowerShell:
+
+```powershell
+$env:NJS_TEST_MODULES = 'C:\path\to\generated-project\node_modules'
+npm run test:integration
+```
+
+This starts an isolated generated server on a random local port and checks authentication, registration, CRUD, rule enforcement, transactional rollback, reports, escaping and modal/inline form round trips. Temporary test databases and servers are cleaned up afterward.
+
+Build an installable package with `npx @vscode/vsce package`.
 
 
 ---

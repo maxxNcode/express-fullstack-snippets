@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { splitSql } = require('./sqlText');
 
 const SCHEMA_FILE = '.njs-schema.json';
 
@@ -122,6 +123,7 @@ class SchemaRegistry {
     }
 
     async removeTable(name) {
+        if (!this.getTable(name)) throw new Error(`Table "${name}" not found`);
         delete this.schema.tables[name];
         // Drop foreign keys that pointed at the removed table
         for (const table of Object.values(this.schema.tables)) {
@@ -438,7 +440,6 @@ class SchemaRegistry {
                 const t = tokens[i].toUpperCase();
                 if (t === 'PRIMARY' && tokens[i + 1]?.toUpperCase() === 'KEY') {
                     field.pk = true;
-                    if (field.type === 'TEXT') field.type = 'INTEGER';
                     i++;
                 } else if (/^(AUTOINCREMENT|AUTO_INCREMENT)$/.test(t)) {
                     field.autoIncrement = true;
@@ -481,22 +482,7 @@ class SchemaRegistry {
      * Split a SQL columns section by top-level commas (respecting parentheses nesting).
      */
     _splitSQLColumns(columnsSection) {
-        const parts = [];
-        let depth = 0;
-        let current = '';
-        for (let i = 0; i < columnsSection.length; i++) {
-            const c = columnsSection[i];
-            if (c === '(') depth++;
-            else if (c === ')') depth--;
-            else if (c === ',' && depth === 0) {
-                parts.push(current);
-                current = '';
-                continue;
-            }
-            current += c;
-        }
-        if (current.trim()) parts.push(current);
-        return parts;
+        return splitSql(columnsSection, ',');
     }
 
     _parseSqlType(rawType) {
@@ -518,8 +504,18 @@ class SchemaRegistry {
         const tokens = [];
         let current = '';
         let depth = 0;
+        let quote = null;
         for (let i = 0; i < colDef.length; i++) {
             const c = colDef[i];
+            if (quote) {
+                current += c;
+                if (c === quote) {
+                    if (colDef[i + 1] === quote) current += colDef[++i];
+                    else quote = null;
+                } else if (c === '\\' && i + 1 < colDef.length) current += colDef[++i];
+                continue;
+            }
+            if (c === "'" || c === '"' || c === '`') { quote = c; current += c; continue; }
             if (c === '(') depth++;
             else if (c === ')') depth--;
             else if (/\s/.test(c) && depth === 0) {
@@ -659,13 +655,11 @@ class SchemaRegistry {
                 if (/^AUTO_INCREMENT$/i.test(t)) {
                     field.pk = true;
                     field.autoIncrement = true;
-                    if (field.type === 'TEXT') field.type = 'INTEGER';
                 }
 
                 // PRIMARY KEY
                 if (t === 'PRIMARY' && tokens[i + 1]?.toUpperCase() === 'KEY') {
                     field.pk = true;
-                    if (field.type === 'TEXT') field.type = 'INTEGER';
                     i++;
                 }
 
@@ -757,10 +751,12 @@ class SchemaRegistry {
     parseInsertStatements(sql) {
         const results = [];
         // Match INSERT INTO statements with optional backticks
-        const insertRegex = /INSERT\s+INTO\s+`?(\w+)`?\s*(?:\(([^)]+)\))?\s*VALUES\s*((?:\([^)]+\)\s*,?\s*)+);?/gi;
+        const insertRegex = /INSERT\s+INTO\s+`?(\w+)`?\s*(?:\(([^)]+)\))?\s*VALUES\s*([\s\S]*)/i;
         let match;
 
-        while ((match = insertRegex.exec(sql)) !== null) {
+        for (const statement of splitSql(sql)) {
+            match = insertRegex.exec(statement);
+            if (!match) continue;
             const tableName = match[1];
             const columnsStr = match[2];
             const valuesStr = match[3];
@@ -772,10 +768,8 @@ class SchemaRegistry {
 
             // Parse all value tuples
             const valueTuples = [];
-            const valueRegex = /\(([^)]+)\)/g;
-            let vMatch;
-            while ((vMatch = valueRegex.exec(valuesStr)) !== null) {
-                const rawValues = vMatch[1];
+            for (const tuple of splitSql(valuesStr, ',')) {
+                const rawValues = tuple.trim().replace(/^\(/, '').replace(/\)$/, '');
                 const parsed = this._parseSqlValues(rawValues);
                 valueTuples.push(parsed);
             }
@@ -855,7 +849,7 @@ class SchemaRegistry {
             current += ch;
         }
 
-        if (current.trim()) {
+        if (current.length || rawValues.trim().endsWith(',') || values.length) {
             values.push(current.trim());
         }
 
@@ -874,11 +868,13 @@ class SchemaRegistry {
         let sqliteData = '';
 
         // Extract CREATE TABLE statements
-        const createRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[^;]+;/gi;
+        const createRegex = /CREATE\s+TABLE\s+/i;
         let match;
-        while ((match = createRegex.exec(sql)) !== null) {
+        for (const statement of splitSql(sql)) {
+            match = createRegex.exec(statement);
+            if (!match) continue;
             try {
-                const { tableName, fields, constraints } = this.parseMySqlCreateTable(match[0]);
+                const { tableName, fields, constraints } = this.parseMySqlCreateTable(statement.slice(match.index));
                 tables.push({ tableName, fields, constraints });
             } catch (e) {
                 // Skip invalid CREATE TABLE statements
@@ -1013,7 +1009,6 @@ class SchemaRegistry {
                     field.type = t;
                 }
             }
-            if (field.pk && field.type === 'TEXT') field.type = 'INTEGER';
             fields.push(field);
         }
         return { tableName, fields };

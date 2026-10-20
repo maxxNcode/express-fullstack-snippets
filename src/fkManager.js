@@ -36,7 +36,6 @@ class FkManager {
         if (!targetPick) return;
 
         const targetTable = this.schemaRegistry.getTable(targetPick.label);
-        const targetPK = targetTable.fields.find(f => f.pk);
         const targetFields = targetTable.fields.map(f => ({
             label: f.name,
             description: f.pk ? '(primary key - recommended)' : ''
@@ -85,8 +84,12 @@ class FkManager {
         );
         if (!fieldPick) return;
 
-        await this.schemaRegistry.removeForeignKey(sourcePick.label, fieldPick.label);
-        vscode.window.showInformationMessage(`njs: FK removed from ${sourcePick.label}.${fieldPick.label}`);
+        try {
+            await this.schemaRegistry.removeForeignKey(sourcePick.label, fieldPick.label);
+            vscode.window.showInformationMessage(`njs: FK removed from ${sourcePick.label}.${fieldPick.label}`);
+        } catch (err) {
+            vscode.window.showErrorMessage(`njs: ${err.message}`);
+        }
     }
 }
 

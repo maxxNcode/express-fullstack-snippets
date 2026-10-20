@@ -2,7 +2,7 @@
   "name": "nodejs-express-workbench",
   "displayName": "NODEJS EXPRESS WORKBENCH",
   "description": "The ultimate VS Code extension for Express + SQLite full-stack development. Includes 45+ schema-aware njs-snippets for CRUD, Auth, Security, Frontend.",
-  "version": "3.9.2",
+  "version": "3.9.3",
   "publisher": "weonlyliveonce",
   "license": "MIT",
   "icon": "icon.png",
@@ -18,7 +18,12 @@
     "Other"
   ],
   "main": "./src/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescriptreact"
+  ],
   "contributes": {
     "commands": [
       {
@@ -60,6 +65,10 @@
       {
         "command": "node-sqlite-ai.showStatus",
         "title": "njs: Schema Status"
+      },
+      {
+        "command": "node-sqlite-ai.checkDependencies",
+        "title": "njs: Check Missing Dependencies"
       },
       {
         "command": "node-sqlite-ai.manageFK",
@@ -124,10 +133,20 @@
           "default": "njs:",
           "description": "Text prefix to trigger AI code generation"
         },
-        "node-sqlite-ai.enableAutocomplete": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable inline ghost text autocomplete"
+        "node-sqlite-ai.dependencyCheck": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "auto",
+            "off"
+          ],
+          "default": "prompt",
+          "enumDescriptions": [
+            "On save, offer to install imported packages missing from package.json or node_modules",
+            "Install them without asking",
+            "Never check on save (the njs: Check Missing Dependencies command still works)"
+          ],
+          "description": "Detect packages a saved JS/TS file imports that are not declared or installed, and install them with the project's package manager"
         }
       }
     },
@@ -166,6 +185,7 @@
     "sql.js": "^1.14.1"
   },
   "scripts": {
-    "test": "node -r ./test/shim.js test/generator.test.js && node test/queryGenerator.test.js && node -r ./test/shim.js test/screenGenerator.test.js"
+    "test": "node test/dependencyChecker.test.js && node test/scaffolder.test.js && node test/generatedOutput.test.js && node test/serverManager.test.js && node -r ./test/shim.js test/generator.test.js && node test/queryGenerator.test.js && node -r ./test/shim.js test/screenGenerator.test.js",
+    "test:integration": "node test/generatedApp.integration.js"
   }
 }

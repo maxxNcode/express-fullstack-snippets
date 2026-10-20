@@ -44,7 +44,8 @@ class AuthGenerator {
         code += `    if (!row) return res.status(401).json({ error: 'Invalid credentials' });\n`;
 
         if (statusField) {
-            code += `    if (row.${statusField} !== 'active') return res.status(403).json({ error: 'Account is not active' });\n`;
+            const active = options.statusActiveValue ?? this.schemaRegistry.getTableSettings?.(tableName)?.statusActiveValue ?? 'active';
+            code += `    if (String(row.${statusField}) !== ${JSON.stringify(String(active))}) return res.status(403).json({ error: 'Account is not active' });\n`;
         }
 
         if (useBcrypt) {
@@ -53,6 +54,8 @@ class AuthGenerator {
             code += `    const valid = /^\\$2[aby]\\$/.test(stored)\n`;
             code += `      ? await bcrypt.compare(String(${passwordField}), stored)\n`;
             code += `      : String(${passwordField}) === stored;\n`;
+            code += `    // Upgrade a plain-text password to a hash on its first successful login\n`;
+            code += `    if (valid && !/^\\$2[aby]\\$/.test(stored)) db.prepare('UPDATE ${tableName} SET ${passwordField} = ? WHERE ${pk} = ?').run(await bcrypt.hash(String(${passwordField}), 10), row.${pk});\n`;
         } else {
             code += `    const valid = (${passwordField} === row.${passwordField});\n`;
         }
@@ -102,7 +105,7 @@ class AuthGenerator {
         const insertFields = nonPkFields.join(', ');
         const insertPlaceholders = nonPkFields.map(f => f === passwordField
             ? (useBcrypt ? 'hashedPassword' : `req.body.${f}`)
-            : `req.body.${f}`
+            : f
         ).join(', ');
 
         let code = '';
@@ -115,9 +118,19 @@ class AuthGenerator {
 
         code += `app.post('/api/auth/register', async (req, res) => {\n`;
         code += '  try {\n';
-        code += `    const { ${allFields.join(', ')} } = req.body;\n`;
+        const { CodeGenerator } = require('./generator');
+        const defaults = new CodeGenerator(this.schemaRegistry);
+        const table = this.schemaRegistry.getTable(tableName);
+        code += `    const { ${allFields.map(name => name + defaults._jsDefault(table?.fields.find(f => f.name === name) || {})).join(', ')} } = req.body || {};\n`;
+        code += `    if (!${passwordField}) return res.status(400).json({ error: '${passwordField} is required' });\n`;
+        for (const name of nonPkFields) {
+            const field = table?.fields.find(f => f.name === name);
+            if ((field?.notNull || field?.pk || options.identityFields?.includes(name)) && name !== passwordField) {
+                code += `    if (${name} == null || ${name} === '') return res.status(400).json({ error: '${name} is required' });\n`;
+            }
+        }
         if (useBcrypt) {
-            code += `    const hashedPassword = await bcrypt.hash(${passwordField}, 10);\n`;
+            code += `    const hashedPassword = await bcrypt.hash(String(${passwordField}), 10);\n`;
         }
 
         const identityForDupCheck = options.identityFields || [];
@@ -264,16 +277,6 @@ class AuthGenerator {
         }).join('');
 
         let html = '';
-        html += '<!-- ========= Auth: Login Form ========= -->\n';
-        html += '// SAVE THIS AS: login.html (place in your public/ folder)\n';
-        if (useAuthJs) {
-            html += '// IMPORTANT: Include auth.js BEFORE this file:\n';
-            html += '//   <script src="auth.js"></script>\n';
-            html += '//   <script>redirectIfAuthenticated();</script>\n';
-        } else {
-            html += '// Self-contained: no auth.js required. Calls /api/auth/login directly.\n';
-        }
-        html += '// ===================================== -->\n';
         html += '<!DOCTYPE html>\n';
         html += '<html lang="en">\n';
         html += '<head>\n';
@@ -294,7 +297,9 @@ class AuthGenerator {
         html += `    <button type="submit">Log In</button>\n`;
         html += `    <p id="loginError" class="error-message" style="display:none;color:#f55;"></p>\n`;
         html += `  </form>\n`;
-        html += `  <a href="/register.html" class="auth-link">Don't have an account? Register</a>\n`;
+        if (options.showRegisterLink !== false) {
+            html += `  <a href="/register.html" class="auth-link">Don't have an account? Register</a>\n`;
+        }
         html += '</div>\n\n';
 
         html += '<script>\n';
@@ -365,16 +370,6 @@ class AuthGenerator {
         }).filter(Boolean).join('\n');
 
         let html = '';
-        html += '<!-- ========= Auth: Register Form ========= -->\n';
-        html += '// SAVE THIS AS: register.html (place in your public/ folder)\n';
-        if (useAuthJs) {
-            html += '// IMPORTANT: Include auth.js BEFORE this file:\n';
-            html += '//   <script src="auth.js"></script>\n';
-            html += '//   <script>redirectIfAuthenticated();</script>\n';
-        } else {
-            html += '// Self-contained: no auth.js required. Calls /api/auth/register directly.\n';
-        }
-        html += '// ========================================= -->\n';
         html += '<!DOCTYPE html>\n';
         html += '<html lang="en">\n';
         html += '<head>\n';

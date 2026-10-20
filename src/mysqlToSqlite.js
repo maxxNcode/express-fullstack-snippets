@@ -1,3 +1,4 @@
+const { splitSql } = require('./sqlText');
 class MysqlToSqliteConverter {
     constructor() {
         this._indexes = [];
@@ -11,12 +12,14 @@ class MysqlToSqliteConverter {
         let result = '';
         let remaining = mysqlSql;
 
-        const statementRegex = /(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[^;]+;?)/gi;
+        const statementRegex = /CREATE\s+TABLE\s+/i;
         let match;
         let lastEnd = 0;
 
-        while ((match = statementRegex.exec(remaining)) !== null) {
-            const stmt = match[1].trim();
+        for (const statement of splitSql(remaining)) {
+            match = statementRegex.exec(statement);
+            if (!match) continue;
+            const stmt = statement.slice(match.index).trim();
             const converted = this._convertCreateTable(stmt);
             if (converted) result += converted + '\n\n';
             lastEnd = match.index + match[0].length;
@@ -446,22 +449,7 @@ class MysqlToSqliteConverter {
     }
 
     _splitBodyLines(body) {
-        const lines = [];
-        let current = '';
-        let depth = 0;
-        for (let i = 0; i < body.length; i++) {
-            const ch = body[i];
-            if (ch === '(') depth++;
-            else if (ch === ')') depth--;
-            if (ch === ',' && depth === 0) {
-                lines.push(current);
-                current = '';
-            } else {
-                current += ch;
-            }
-        }
-        if (current.trim()) lines.push(current);
-        return lines;
+        return splitSql(body, ',');
     }
 }
 

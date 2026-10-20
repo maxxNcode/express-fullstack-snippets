@@ -1110,16 +1110,8 @@ class SchemaViewProvider {
         if (!editor) return;
         const { AppGenerator } = require('./appGenerator');
         const appGen = new AppGenerator(this.schemaRegistry);
-        const result = appGen.generateApp(tableConfigs, authConfig, options || {});
+        const result = appGen.generateApp(tableConfigs, authConfig, { ...options, businessRules: includeRules ? this.schemaRegistry.getRules() : [] });
         let allCode = result.server;
-        if (includeRules) {
-            const rules = this.schemaRegistry.getRules();
-            if (rules.length > 0) {
-                const { RuleEngine } = require('./ruleEngine');
-                const engine = new RuleEngine(this.schemaRegistry);
-                allCode += '\n\n' + engine.generateAll(rules, []);
-            }
-        }
         if (result.html) allCode += '\n\n' + result.html;
         if (result.js) allCode += '\n\n' + result.js;
         try {

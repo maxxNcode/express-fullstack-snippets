@@ -65,7 +65,7 @@ class Scaffer {
         }
 
         files['public/login.html'] = hasAuth
-            ? this.authGen.generateLoginFormHtml(authConfig.tableName, authConfig.identityFields, authConfig.passwordField, { useJwt: true })
+            ? this.authGen.generateLoginFormHtml(authConfig.tableName, authConfig.identityFields, authConfig.passwordField, { useJwt: true, showRegisterLink: !!authConfig.generateRegisterHtml })
             : this._generateLoginFallback();
 
         if (hasAuth && authConfig.generateRegisterHtml) {
@@ -85,13 +85,13 @@ class Scaffer {
         if (reports && reports.length > 0) {
             for (const report of reports) {
                 const cols = report.displayConfig || report.columns.map(c => ({
-                    field: c.field,
+                    field: c.table ? c.table + '_' + c.field : c.field,
                     label: c.field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
                     format: 'text'
                 }));
                 const isCustomReport = !!report.columns; // Uses query generator
                 if (isCustomReport) {
-                    files[`public/${report.name}.html`] = this.codeGen.queryGen.generateReportHtml(report.name, report.columns, cols, { title: report.title });
+                    files[`public/${report.name}.html`] = this.codeGen.queryGen.generateReportHtml(report.name, report.columns, cols, { title: report.title, useAuth: hasAuth });
                 } else {
                     // Generic report using rule engine
                     files[`public/${report.name}.html`] = this.ruleEngine.generateReportHtml(report.name, cols);
@@ -136,7 +136,7 @@ class Scaffer {
                 } else if (screen.type === 'widget') {
                     const widgetHtml = this.screenGen.generateWidgetHtml(screen);
                     if (files['public/dashboard.html']) {
-                        files['public/dashboard.html'] = files['public/dashboard.html'].replace('</div>\n</body>', widgetHtml + '\n</div>\n</body>');
+                        files['public/dashboard.html'] = files['public/dashboard.html'].replace(/<\/div>\s*<\/body>/, () => widgetHtml + '\n</div>\n</body>');
                     }
                     const widgetSql = this._widgetSql(screen);
                     if (widgetSql) {
@@ -154,12 +154,12 @@ class Scaffer {
                 }
             }
             const linked = screens.filter(s => s.type === 'transaction' || s.type === 'report');
-            if (linked.length > 0 && files['public/dashboard.html'] && files['public/dashboard.html'].includes('</div>\n</body>')) {
+            if (linked.length > 0 && files['public/dashboard.html'] && /<\/div>\s*<\/body>/.test(files['public/dashboard.html'])) {
                 const links = linked.map(s =>
                     `      <a href="/${s.name}.html" style="display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none">${this._escHtml(s.title || s.name)}</a>`
                 ).join('\n');
                 const section = `    <div class="screens-section" style="margin-top:24px">\n      <h2>Screens</h2>\n${links}\n    </div>\n`;
-                files['public/dashboard.html'] = files['public/dashboard.html'].replace('</div>\n</body>', section + '</div>\n</body>');
+                files['public/dashboard.html'] = files['public/dashboard.html'].replace(/<\/div>\s*<\/body>/, () => section + '</div>\n</body>');
             }
             if (screenRoutes.length > 0 && serverCode.includes('// --- Default Route ---')) {
                 serverCode = serverCode.replace('// --- Default Route ---', '// ======================= Screen Routes =======================\n' + screenRoutes.join('\n\n') + '\n\n// --- Default Route ---');
@@ -224,20 +224,13 @@ class Scaffer {
             code += 'const authenticate = (req, res, next) => next();\n\n';
         }
 
-        // Business rules middleware
-        const hasRules = !!(businessRules && businessRules.length > 0);
-        if (hasRules) {
-            code += this.ruleEngine.generateAll(businessRules, [{ method: 'POST', path: '/api/*', table: '*' }]);
-            code += '\n';
-        }
-
         // Auth routes
         if (hasAuth) {
             code += '// ======================= Auth Routes =======================\n';
-            code += this.authGen.generateLogin(authConfig.tableName, authConfig.identityFields, authConfig.passwordField, authConfig.statusField || null, { useJwt: true, useBcrypt: true });
+            code += this.authGen.generateLogin(authConfig.tableName, authConfig.identityFields, authConfig.passwordField, authConfig.statusField || null, { useJwt: true, useBcrypt: true, statusActiveValue: (this.schemaRegistry.getTableSettings(authConfig.tableName) || {}).statusActiveValue });
             code += '\n\n';
 
-            if (authConfig.generateRegister) {
+            if (authConfig.generateRegister || authConfig.generateRegisterHtml) {
                 const table = this.schemaRegistry.getTable(authConfig.tableName);
                 const allFields = table ? table.fields.map(f => f.name) : [];
                 code += this.authGen.generateRegister(authConfig.tableName, allFields, authConfig.passwordField, { ...authConfig, identityFields: authConfig.identityFields });
@@ -256,23 +249,48 @@ class Scaffer {
             code += '});\n\n';
         }
 
+        // Every CRUD API needs a token once auth is configured
+        if (hasAuth) {
+            code += '// --- Protect CRUD APIs ---\n';
+            for (const t of tableNames) code += "app.use('/api/" + t.toLowerCase() + "', authenticate);\n";
+            code += '\n';
+        }
+
         // Passwords saved through the CRUD page must be hashed, or login can never match them
         if (hasAuth && tableNames.includes(authConfig.tableName)) {
             const pw = authConfig.passwordField;
             code += '// --- Hash ' + authConfig.tableName + '.' + pw + ' on create/update ---\n';
             code += "app.use('/api/" + authConfig.tableName.toLowerCase() + "', (req, res, next) => {\n";
-            code += "  if ((req.method === 'POST' || req.method === 'PUT') && req.body && req.body." + pw + " && !/^\\$2[aby]\\$/.test(String(req.body." + pw + "))) {\n";
+            code += "  if ((req.method === 'PUT' || req.method === 'PATCH') && req.body && req.body." + pw + " === '') delete req.body." + pw + ";\n";
+            code += "  if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && req.body." + pw + " && !/^\\$2[aby]\\$/.test(String(req.body." + pw + "))) {\n";
             code += '    req.body.' + pw + ' = bcrypt.hashSync(String(req.body.' + pw + '), 10);\n';
             code += '  }\n';
             code += '  next();\n';
             code += '});\n\n';
+            // Never send password hashes back to the browser
+            code += "app.use('/api/" + authConfig.tableName.toLowerCase() + "', (req, res, next) => {\n";
+            code += '  const json = res.json.bind(res);\n';
+            code += "  const strip = r => { if (r && typeof r === 'object') delete r." + pw + "; return r; };\n";
+            code += '  res.json = body => json(Array.isArray(body) ? body.map(strip) : strip(body));\n';
+            code += '  next();\n';
+            code += '});\n\n';
+        }
+
+        // Business rules: per-table guards, must run before the CRUD routes
+        if (businessRules && businessRules.length > 0) {
+            code += this.ruleEngine.generateAll(businessRules);
+            code += '\n';
         }
 
         // CRUD routes for each table
         code += '// ======================= CRUD Routes =======================\n';
         for (const tableName of tableNames) {
             code += this.codeGen.generatePrepStatements(tableName) + '\n\n';
-            code += this.codeGen.generateCrudRoutes(tableName) + '\n\n';
+            code += this.codeGen.generateCrudRoutes(tableName, { withRules: !!businessRules?.length }) + '\n\n';
+        }
+
+        for (const route of this.schemaRegistry.getActionRoutes?.() || []) {
+            code += this._generateActionRouteCode(route) + '\n\n';
         }
 
         // Report routes
@@ -298,6 +316,7 @@ class Scaffer {
         // Error handler
         code += '// --- Error Handler ---\n';
         code += 'app.use((err, req, res, next) => {\n';
+        code += '  if (err.type === "entity.parse.failed") return res.status(400).json({ error: "Invalid JSON body" });\n';
         code += '  console.error(err.stack);\n';
         code += '  res.status(500).json({ error: "Something went wrong!" });\n';
         code += '});\n\n';
@@ -392,8 +411,8 @@ class Scaffer {
         code += 'DB_PATH=data/database.db\n\n';
         if (hasAuth) {
             code += '# JWT Secrets — CHANGE THESE in production\n';
-            code += 'JWT_SECRET=change_this_to_a_random_string_min_32_chars\n';
-            code += 'JWT_REFRESH_SECRET=change_this_to_another_random_string\n';
+            code += 'JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex') + '\n';
+            code += 'JWT_REFRESH_SECRET=' + require('crypto').randomBytes(32).toString('hex') + '\n';
         }
         return code;
     }
@@ -538,7 +557,7 @@ class Scaffer {
         const table = this.schemaRegistry.getTable(tableName);
         if (!table) return '<!-- Table not found -->';
 
-        const fields = table.fields.filter(f => !f.pk);
+        const fields = table.fields.filter(f => !f.pk || this.codeGen._pkIsManual(tableName));
         const pk = table.fields.find(f => f.pk);
         const pkName = pk ? pk.name : (table.fields.length > 0 ? table.fields[0].name : 'id');
         const api = '/api/' + tableName.toLowerCase();
@@ -551,7 +570,7 @@ class Scaffer {
 
         // Detect FK fields for dropdown population
         const fkFields = fields.filter(f => f.fk);
-        const fkFetchData = fkFields.map(f => `const ${f.fk.table}Data = await fetch('/api/${f.fk.table.toLowerCase()}').then(r => r.json());`).join('\n        ');
+        const fkFetchData = [...new Set(fkFields.map(f => f.fk.table))].map(t => `const ${t}Data = await _fetch('/api/${t.toLowerCase()}').then(r => r.json());`).join('\n        ');
         const fkSelectPopulate = fkFields.map(f => {
             const selectId = `${tableName.toLowerCase()}_${f.name}`;
             return `
@@ -559,7 +578,7 @@ class Scaffer {
               ${f.fk.table}Data.forEach(function(item) {
                 const opt = document.createElement('option');
                 opt.value = item.${this._getPK(f.fk.table)};
-                opt.textContent = Object.values(item).filter(v => v !== null && v !== undefined).join(' - ');
+                opt.textContent = _label(item);
                 ${selectId}.appendChild(opt);
               });`;
         }).join('\n        ');
@@ -805,48 +824,9 @@ class Scaffer {
             html += '        <h2 id="modalFormTitle" style="margin:0 0 16px;">Edit ' + displayName + '</h2>\n';
             html += '        <form id="editModalForm">\n';
 
-            for (const f of fields) {
-                const required = f.notNull ? ' required' : '';
-                const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-
-                if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
-                    const active = s.statusActiveValue;
-                    const inactive = s.statusInactiveValue;
-                    if (s.statusUiStyle === 'radio') {
-                        html += '          <div style="margin-bottom:8px;"><label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
-                        html += '            <label style="margin-right:8px;font-size:13px;"><input type="radio" name="' + f.name + '" value="' + active + '" /> ' + active.charAt(0).toUpperCase() + active.slice(1) + '</label>\n';
-                        html += '            <label style="font-size:13px;"><input type="radio" name="' + f.name + '" value="' + inactive + '" /> ' + inactive.charAt(0).toUpperCase() + inactive.slice(1) + '</label>\n';
-                        html += '          </div>\n';
-                    } else if (s.statusUiStyle === 'dropdown') {
-                        html += '          <select name="' + f.name + '"' + required + '>\n';
-                        html += '            <option value="' + active + '">' + active.charAt(0).toUpperCase() + active.slice(1) + '</option>\n';
-                        html += '            <option value="' + inactive + '">' + inactive.charAt(0).toUpperCase() + inactive.slice(1) + '</option>\n';
-                        html += '          </select><br>\n';
-                    } else if (s.statusUiStyle === 'toggle') {
-                        html += '          <div style="margin-bottom:8px;"><label style="font-size:12px;color:#888;display:block;">' + label + '</label>\n';
-                        html += '            <label class="switch" style="position:relative;display:inline-block;width:44px;height:24px;vertical-align:middle;">\n';
-                        html += '              <input type="checkbox" name="' + f.name + '" value="' + active + '" onchange="this.value=this.checked?\'' + active + '\':\'' + inactive + '\'">\n';
-                        html += '              <span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:24px;transition:.3s;"></span>\n';
-                        html += '            </label>\n';
-                        html += '          </div>\n';
-                    } else {
-                        html += '          <input type="text" name="' + f.name + '"' + required + '><br>\n';
-                    }
-                } else if (f.fk) {
-                    html += '          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
-                    html += '          <select id="editModal_' + tableName.toLowerCase() + '_' + f.name + '" name="' + f.name + '"' + required + '>\n';
-                    html += '            <option value="">Select ' + f.fk.table + '</option>\n';
-                    html += '          </select><br>\n';
-                } else if (f.type === 'REAL' || f.type === 'INTEGER') {
-                    html += '          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
-                    html += '          <input type="number" name="' + f.name + '" step="' + (f.type === 'REAL' ? 'any' : '1') + '"' + required + '><br>\n';
-                } else {
-                    html += '          <label style="font-size:12px;color:#888;display:block;margin-bottom:2px;">' + label + '</label>\n';
-                    html += '          <input type="text" name="' + f.name + '"' + required + '><br>\n';
-                }
-            }
-
+            const addBody = html.slice(html.indexOf('<form id="recordForm">') + '<form id="recordForm">'.length, html.indexOf('<div style="margin-top:12px;display:flex;gap:8px;">'));
+            html += addBody.replace(/id="([^"]+)"/g, 'id="editModal_$1"')
+                .replace(/<script>[\s\S]*?<\/script>/g, '').replace(/onchange="update[^"]*"/g, '');
             html += '          <div style="display:flex;gap:8px;margin-top:12px;">\n';
             html += '            <button type="button" class="btn-primary" id="modalSaveBtn">Save Changes</button>\n';
             html += '            <button type="button" class="btn-warning" onclick="closeEditModal()">Cancel</button>\n';
@@ -868,7 +848,7 @@ class Scaffer {
                 html += '        <div style="position:relative;">\n';
                 html += '          <button type="button" class="btn-primary btn-sm" onclick="toggleColMenu()">Columns</button>\n';
                 html += '          <div id="colMenu" class="col-menu">\n';
-                for (const f of fields) {
+                for (const f of fields.filter(f => this.codeGen._detectUiType(f, tableName) !== 'password')) {
                     const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                     html += '            <label><input type="checkbox" data-field="' + f.name + '" checked onchange="toggleCol(\'' + f.name + '\', this.checked)"> ' + label + '</label>\n';
                 }
@@ -908,6 +888,60 @@ class Scaffer {
         } else {
             html += '    const _fetch = window.fetch.bind(window);\n';
         }
+        html += "    function _esc(v) { return String(v == null ? '' : v).replace(/[&<>\"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]; }); }\n";
+        html += '    function _jsArg(v) { return _esc(JSON.stringify(v)); }\n';
+        html += "    async function _ok(res) { if (!res.ok) { var e = {}; try { e = await res.json(); } catch (x) {} throw new Error(e.error || ('Request failed (' + res.status + ')')); } return res; }\n";
+        html += '    function _label(item) { return Object.keys(item).filter(function(k) { return !/pass/i.test(k) && item[k] !== null && item[k] !== undefined; }).map(function(k) { return item[k]; }).join(" - "); }\n';
+
+        const formFields = fields.filter(f => !this.codeGen._isAutoTimestampField(tableName, f.name)).map(f => ({
+            name: f.name, type: this.codeGen._detectUiType(f, tableName), pk: !!f.pk,
+            multi: this.codeGen._detectUiType(f, tableName) === 'checkbox' && !!f.options?.length,
+            status: !!statField && f.name === statField.name && s.statusUiStyle === 'toggle',
+            active: s.statusActiveValue, inactive: s.statusInactiveValue
+        }));
+        html += '    const FORM_FIELDS = ' + JSON.stringify(formFields).replace(/</g, '\u003c') + ';\n';
+        html += `    function readForm(id, editing) {
+      const form = document.getElementById(id), data = {};
+      FORM_FIELDS.forEach(f => {
+        if (editing && f.pk) return;
+        const controls = Array.from(form.querySelectorAll('[name="' + f.name + '"], [data-field="' + f.name + '"]'));
+        const el = controls.find(c => c.type !== 'hidden') || controls[0];
+        if (!el) return;
+        if (f.multi) data[f.name] = controls.filter(c => c.type === 'checkbox' && c.checked).map(c => c.value).join(',');
+        else if (el.type === 'radio') data[f.name] = (controls.find(c => c.checked) || {}).value || '';
+        else if (el.type === 'checkbox') data[f.name] = f.status ? (el.checked ? f.active : f.inactive) : (el.checked ? '1' : '0');
+        else data[f.name] = el.value;
+        if (editing && f.type === 'password' && data[f.name] === '') delete data[f.name];
+      });
+      return data;
+    }
+    function fillForm(id, row) {
+      const form = document.getElementById(id);
+      FORM_FIELDS.forEach(f => {
+        const controls = Array.from(form.querySelectorAll('[name="' + f.name + '"], [data-field="' + f.name + '"]'));
+        controls.forEach(el => {
+          let v = row[f.name];
+          if (f.type === 'password') v = '';
+          if (f.pk) el.disabled = true;
+          if (el.type === 'checkbox') el.checked = f.multi ? String(v || '').split(',').includes(el.value) : (f.status ? String(v) === String(f.active) : v === true || String(v) === '1');
+          else if (el.type === 'radio') el.checked = String(el.value) === String(v);
+          else {
+            if (f.type === 'datetime-local' && v) v = String(v).replace(' ', 'T').slice(0, 16);
+            if (f.type === 'date' && v) v = String(v).slice(0, 10);
+            el.value = v == null ? '' : v;
+          }
+        });
+      });
+    }
+    function resetForm() {
+      const form = document.getElementById('recordForm');
+      form.reset();
+      FORM_FIELDS.filter(f => f.pk).forEach(f => {
+        const el = form.querySelector('[name="' + f.name + '"]');
+        if (el) el.disabled = false;
+      });
+    }
+`;
         html += '\n';
 
         html += '    async function loadFKData() {\n';
@@ -930,7 +964,7 @@ class Scaffer {
         html += "        var si = document.getElementById('searchInput'); if (si) si.value = '';\n";
         html += '        renderRecords();\n';
         html += '      } catch (err) {\n';
-        html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + err.message + '</p>';\n";
+        html += "        document.getElementById('recordsTable').innerHTML = '<p style=\"color:#d32f2f;\">Error: ' + _esc(err.message) + '</p>';\n";
         html += '      }\n';
         html += '    }\n\n';
 
@@ -972,29 +1006,29 @@ class Scaffer {
             html += '      var html = \'<div class="card-grid">\';\n';
             html += '      page.forEach(function(row) {\n';
             html += "        html += '<div class=\"card\">';\n";
-            for (const f of fields) {
+            for (const f of fields.filter(f => this.codeGen._detectUiType(f, tableName) !== 'password')) {
                 const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
                 if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
                     const active = s.statusActiveValue;
                     const inactive = s.statusInactiveValue;
-                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</span></div>';\n";
+                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : _esc(row." + f.name + "))) + '</span></div>';\n";
                 } else if (f.options && f.options.length > 0) {
                     const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
-                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + (" + optMap + "[row." + f.name + "] || (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '')) + '</span></div>';\n";
+                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + _esc(" + optMap + "[row." + f.name + "] ?? row." + f.name + ") + '</span></div>';\n";
                 } else {
-                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</span></div>';\n";
+                    html += "        html += '<div class=\"card-field\" data-field=\"" + f.name + "\"><label>" + label + "</label><span>' + _esc(row." + f.name + ") + '</span></div>';\n";
                 }
             }
             html += "        html += '<div class=\"card-actions\">';\n";
-            html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
+            html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(' + _jsArg(row." + pkName + ") + ')\">Edit</button> ';\n";
             if (hasStat) {
-                html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(row." + pkName + ")\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ');\n";
+                html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(' + _jsArg(row." + pkName + ") + ')\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(' + _jsArg(row." + pkName + ") + ')\">Deactivate</button> ');\n";
                 if (showDelete) {
-                    html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
+                    html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(' + _jsArg(row." + pkName + ") + ')\">Delete</button>';\n";
                 }
             } else {
-                html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+                html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(' + _jsArg(row." + pkName + ") + ')\">Delete</button>';\n";
             }
             html += "        html += '</div>';\n";
             html += "        html += '</div>';\n";
@@ -1002,35 +1036,35 @@ class Scaffer {
             html += "      html += '</div>';\n";
         } else {
             html += '      var html = \'<table><thead><tr>\';\n';
-            for (const f of fields) {
+            for (const f of fields.filter(f => this.codeGen._detectUiType(f, tableName) !== 'password')) {
                 const label = f.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 html += "      html += '<th onclick=\"sortRecords(\\'" + f.name + "\\')\" data-field=\"" + f.name + "\" style=\"cursor:pointer;user-select:none;\">" + label + "</th>';\n";
             }
             html += "      html += '<th data-field=\"__actions__\">Actions</th></tr></thead><tbody>';\n";
             html += '      page.forEach(function(row) {\n';
             html += "        html += '<tr>';\n";
-            for (const f of fields) {
+            for (const f of fields.filter(f => this.codeGen._detectUiType(f, tableName) !== 'password')) {
                 const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
                 if (isStatus && s.statusField !== '__none__' && s.statusField !== '') {
                     const active = s.statusActiveValue;
                     const inactive = s.statusInactiveValue;
-                    html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : ''))) + '</td>';\n";
+                    html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " === '" + active + "' ? '<span class=\"status-badge status-active\">" + active.charAt(0).toUpperCase() + active.slice(1) + "</span>' : (row." + f.name + " === '" + inactive + "' ? '<span class=\"status-badge status-inactive\">" + inactive.charAt(0).toUpperCase() + inactive.slice(1) + "</span>' : _esc(row." + f.name + "))) + '</td>';\n";
                 } else if (f.options && f.options.length > 0) {
                     const optMap = JSON.stringify(Object.fromEntries(f.options.map(o => [o.value, o.label])));
-                    html += "        html += '<td data-field=\"" + f.name + "\">' + (" + optMap + "[row." + f.name + "] || (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '')) + '</td>';\n";
+                    html += "        html += '<td data-field=\"" + f.name + "\">' + _esc(" + optMap + "[row." + f.name + "] ?? row." + f.name + ") + '</td>';\n";
                 } else {
-                    html += "        html += '<td data-field=\"" + f.name + "\">' + (row." + f.name + " !== null && row." + f.name + " !== undefined ? row." + f.name + " : '') + '</td>';\n";
+                    html += "        html += '<td data-field=\"" + f.name + "\">' + _esc(row." + f.name + ") + '</td>';\n";
                 }
             }
             html += "        html += '<td class=\"actions\" data-field=\"__actions__\">';\n";
-            html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(row." + pkName + ")\">Edit</button> ';\n";
+            html += "        html += '<button class=\"btn-primary btn-sm\" onclick=\"editRecord(' + _jsArg(row." + pkName + ") + ')\">Edit</button> ';\n";
             if (hasStat) {
-                html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(row." + pkName + ")\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(row." + pkName + ")\">Deactivate</button> ');\n";
+                html += "        html += (row." + statField.name + " === '" + s.statusInactiveValue + "' ? '<button class=\"btn-success btn-sm\" onclick=\"activateRecord(' + _jsArg(row." + pkName + ") + ')\">Activate</button> ' : '<button class=\"btn-danger btn-sm\" onclick=\"deactivateRecord(' + _jsArg(row." + pkName + ") + ')\">Deactivate</button> ');\n";
                 if (showDelete) {
-                    html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(row." + pkName + ")\">Delete</button>';\n";
+                    html += "        html += '<button class=\"btn-danger btn-sm\" style=\"background:#b71c1c;\" onclick=\"hardDeleteRecord(' + _jsArg(row." + pkName + ") + ')\">Delete</button>';\n";
                 }
             } else {
-                html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(row." + pkName + ")\">Delete</button>';\n";
+                html += "        html += '<button class=\"btn-danger btn-sm\" onclick=\"deleteRecord(' + _jsArg(row." + pkName + ") + ')\">Delete</button>';\n";
             }
             html += "        html += '</td></tr>';\n";
             html += '      });\n';
@@ -1102,32 +1136,16 @@ class Scaffer {
 
         // Form save handler
         html += "    document.getElementById('saveBtn').onclick = async function() {\n";
-        html += "      let data = {\n";
-        for (const f of fields) {
-            if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
-            const uiType = this.codeGen._detectUiType(f, tableName);
-            if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                html += "        " + f.name + ": document.getElementById('" + f.name + "Val').value,\n";
-            } else if (uiType === 'radio') {
-                html += "        " + f.name + ": document.querySelector('[name=\\\"" + f.name + "\\\"]:checked')?.value || '',\n";
-            } else if (uiType === 'checkbox') {
-                html += "        " + f.name + ": document.querySelector('[name=\\\"" + f.name + "\\\"]').checked ? '1' : '0',\n";
-            } else {
-                html += "        " + f.name + ": document.querySelector('[name=\\\"" + f.name + "\\\"]').value,\n";
-            }
-        }
-        html += "      };\n";
-        html += "      let unchecked = document.getElementById('recordForm').querySelectorAll('input[type=checkbox]:not(:checked)');\n";
-        html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[checkbox.name] = '0'; });\n";
+        html += "      const data = readForm('recordForm', editId !== null);\n";
         html += "      const msg = document.getElementById('formMessage');\n";
         html += '      try {\n';
         if (isModalEdit) {
             html += "        const res = await _fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
-            html += "        if (!res.ok) { const err = await res.json(); throw new Error(err.error); }\n";
+            html += "        await _ok(res);\n";
             html += "        msg.innerHTML = '<div class=\\\"message message-success\\\">Record added successfully!</div>';\n";
         } else {
-            html += '        if (editId) {\n';
-            html += "          await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
+            html += '        if (editId !== null) {\n';
+            html += "          await _ok(await _fetch(API + '/' + encodeURIComponent(editId), { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }));\n";
             html += '          editId = null;\n';
             html += "          document.getElementById('saveBtn').textContent = 'Add Record';\n";
             html += "          document.getElementById('formTitle').textContent = 'Add " + displayName + "';\n";
@@ -1135,15 +1153,15 @@ class Scaffer {
             html += "          msg.innerHTML = '<div class=\\\"message message-success\\\">Record updated successfully!</div>';\n";
             html += '        } else {\n';
             html += "          const res = await _fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
-            html += "          if (!res.ok) { const err = await res.json(); throw new Error(err.error); }\n";
+            html += "          await _ok(res);\n";
             html += "          msg.innerHTML = '<div class=\\\"message message-success\\\">Record added successfully!</div>';\n";
             html += '        }\n';
         }
-        html += '        document.getElementById(\'recordForm\').reset();\n';
+        html += '        resetForm();\n';
         html += '        loadRecords();\n';
         html += "        setTimeout(function() { msg.innerHTML = ''; }, 3000);\n";
         html += '      } catch (err) {\n';
-        html += "        msg.innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+        html += "        msg.innerHTML = '<div class=\\\"message message-error\\\">' + _esc(err.message) + '</div>';\n";
         html += '      }\n';
         html += '    };\n\n';
 
@@ -1151,29 +1169,7 @@ class Scaffer {
             // Modal edit functions
             html += '    function openEditModal(id, row) {\n';
             html += '      editId = id;\n';
-            for (const f of fields) {
-                if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
-                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-                const uiType = this.codeGen._detectUiType(f, tableName);
-                if (uiType === 'fk-select') {
-                    const selectId = 'editModal_' + tableName.toLowerCase() + '_' + f.name;
-                    html += "      if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
-                } else if (isStatus && s.statusUiStyle === 'radio') {
-                    html += "      document.querySelectorAll('#editModalForm input[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value === row." + f.name + "); });\n";
-                } else if (isStatus && s.statusUiStyle === 'toggle') {
-                    html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
-                } else if (uiType === 'select') {
-                    html += "      var sel = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (sel) sel.value = row." + f.name + " ?? '';\n";
-                } else if (uiType === 'radio') {
-                    html += "      document.querySelectorAll('#editModalForm [name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value == row." + f.name + "); });\n";
-                } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                    html += "      document.querySelectorAll('#editModalForm [data-field=\\\"" + f.name + "\\\"]').forEach(function(box) { box.checked = (String(row." + f.name + ").split(',').indexOf(box.value) !== -1); }); update" + f.name + "();\n";
-                } else if (uiType === 'checkbox') {
-                    html += "      var cb = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
-                } else {
-                    html += "      var el = document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]'); if (el) el.value = row." + f.name + " != null ? row." + f.name + " : '';\n";
-                }
-            }
+            html += "      fillForm('editModalForm', row);\n";
             html += "      document.getElementById('editModal').style.display = 'flex';\n";
             html += '    }\n\n';
 
@@ -1183,26 +1179,9 @@ class Scaffer {
             html += '    }\n\n';
 
             html += "    document.getElementById('modalSaveBtn').onclick = async function() {\n";
-            html += "      let data = {\n";
-            for (const f of fields) {
-                if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
-                const uiType = this.codeGen._detectUiType(f, tableName);
-                if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                    html += "        " + f.name + ": document.getElementById('" + f.name + "Val').value,\n";
-                } else if (uiType === 'radio') {
-                    html += "        " + f.name + ": document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]:checked')?.value || '',\n";
-                } else if (uiType === 'checkbox') {
-                    html += "        " + f.name + ": document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]').checked ? '1' : '0',\n";
-                } else {
-                    html += "        " + f.name + ": document.querySelector('#editModalForm [name=\\\"" + f.name + "\\\"]').value,\n";
-                }
-            }
-            html += "      };\n";
-            html += "      let unchecked = document.getElementById('editModalForm').querySelectorAll('input[type=checkbox]:not(:checked)');\n";
-html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[checkbox.name] = '0'; });\n";
-
+            html += "      const data = readForm('editModalForm', true);\n";
             html += '      try {\n';
-            html += "        await _fetch(API + '/' + editId, { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });\n";
+            html += "        await _ok(await _fetch(API + '/' + encodeURIComponent(editId), { method: '" + editMode.toUpperCase() + "', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }));\n";
             html += '        closeEditModal();\n';
             html += '        loadRecords();\n';
             html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record updated!</div>';\n";
@@ -1215,10 +1194,10 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
             // Edit record - opens modal
             html += '    async function editRecord(id) {\n';
             html += '      try {\n';
-            html += '        const res = await _fetch(API + \'/\' + id);\n';
+            html += '        const res = await _fetch(API + \'/\' + encodeURIComponent(id));\n';
             html += '        if (!res.ok) throw new Error(\'Failed to fetch record\');\n';
             html += '        const row = await res.json();\n';
-            html += '        openEditModal(id, row);\n';
+
 
             // Populate modal FK dropdowns
             for (const f of fkFields) {
@@ -1226,6 +1205,7 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
                 html += '        ' + "await populateFKDropdown('" + selectId + "', '/api/" + f.fk.table.toLowerCase() + "', '" + this._getPK(f.fk.table) + "');\n";
             }
 
+            html += '        openEditModal(id, row);\n';
             html += '      } catch (err) {\n';
             html += "        alert('Error: ' + err.message);\n";
             html += '      }\n';
@@ -1238,10 +1218,11 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
             html += '        if (!sel) return;\n';
             html += '        const res = await _fetch(apiUrl);\n';
             html += '        const items = await res.json();\n';
+            html += "        sel.innerHTML = '<option value=\"\">Select...</option>';\n";
             html += '        items.forEach(function(item) {\n';
             html += '          const opt = document.createElement(\'option\');\n';
             html += '          opt.value = item[pkField];\n';
-            html += '          opt.textContent = Object.values(item).filter(v => v !== null && v !== undefined).join(\' - \');\n';
+            html += '          opt.textContent = _label(item);\n';
             html += '          sel.appendChild(opt);\n';
             html += '        });\n';
             html += '      } catch (e) {}\n';
@@ -1251,35 +1232,11 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
             // Inline edit record (existing behavior)
             html += '    async function editRecord(id) {\n';
             html += '      try {\n';
-            html += '        const res = await _fetch(API + \'/\' + id);\n';
+            html += '        const res = await _fetch(API + \'/\' + encodeURIComponent(id));\n';
             html += '        if (!res.ok) throw new Error(\'Failed to fetch record\');\n';
             html += '        const row = await res.json();\n';
             html += '        editId = id;\n';
-            for (const f of fields) {
-                if (this.codeGen._isAutoTimestampField(tableName, f.name)) continue;
-                const isStatus = (statField && f.name === statField.name) || (f.name.toLowerCase().includes('stat') && !s.statusField);
-                const uiType = this.codeGen._detectUiType(f, tableName);
-                if (uiType === 'fk-select') {
-                    const selectId = tableName.toLowerCase() + '_' + f.name;
-                    html += "        if (document.getElementById('" + selectId + "')) document.getElementById('" + selectId + "').value = row." + f.name + ";\n";
-                } else if (isStatus && s.statusUiStyle === 'radio') {
-                    html += "        var rbs = document.querySelectorAll('input[name=\\\"" + f.name + "\\\"]');\n";
-                    html += "        rbs.forEach(function(rb) { rb.checked = (rb.value === row." + f.name + "); });\n";
-                } else if (isStatus && s.statusUiStyle === 'toggle') {
-                    html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]');\n";
-                    html += "        if (cb) { cb.checked = (row." + f.name + " === cb.value); cb.value = row." + f.name + " || '" + s.statusInactiveValue + "'; }\n";
-                } else if (uiType === 'select') {
-                    html += "        var sel = document.querySelector('[name=\\\"" + f.name + "\\\"]'); if (sel) sel.value = row." + f.name + " ?? '';\n";
-                } else if (uiType === 'radio') {
-                    html += "        document.querySelectorAll('[name=\\\"" + f.name + "\\\"]').forEach(function(rb) { rb.checked = (rb.value == row." + f.name + "); });\n";
-                } else if (uiType === 'checkbox' && f.options && f.options.length > 0) {
-                    html += "        document.querySelectorAll('[data-field=\\\"" + f.name + "\\\"]').forEach(function(box) { box.checked = (String(row." + f.name + ").split(',').indexOf(box.value) !== -1); }); var hv = document.getElementById('" + f.name + "Val'); if (hv) hv.value = row." + f.name + " ?? '';\n";
-                } else if (uiType === 'checkbox') {
-                    html += "        var cb = document.querySelector('[name=\\\"" + f.name + "\\\"]'); if (cb) cb.checked = row." + f.name + " == 1 || row." + f.name + " === true;\n";
-                } else {
-                    html += "        if (document.querySelector('[name=\\\"" + f.name + "\\\"]')) document.querySelector('[name=\\\"" + f.name + "\\\"]').value = row." + f.name + " != null ? row." + f.name + " : '';\n";
-                }
-            }
+            html += "        fillForm('recordForm', row);\n";
             html += "        document.getElementById('saveBtn').textContent = 'Update Record';\n";
             html += "        document.getElementById('formTitle').textContent = 'Edit " + displayName + "';\n";
             html += "        document.getElementById('cancelBtn').style.display = 'inline-block';\n";
@@ -1292,7 +1249,7 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
             // Cancel edit
             html += '    function cancelEdit() {\n';
             html += '      editId = null;\n';
-            html += "      document.getElementById('recordForm').reset();\n";
+            html += "      resetForm();\n";
             html += "      document.getElementById('saveBtn').textContent = 'Add Record';\n";
             html += "      document.getElementById('formTitle').textContent = 'Add " + displayName + "';\n";
             html += "      document.getElementById('cancelBtn').style.display = 'none';\n";
@@ -1305,22 +1262,22 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
             html += '    async function deactivateRecord(id) {\n';
             html += "      if (!confirm('Deactivate this record?')) return;\n";
             html += '      try {\n';
-            html += "        await _fetch(API + '/' + id, { method: 'DELETE' });\n";
+            html += "        await _ok(await _fetch(API + '/' + encodeURIComponent(id), { method: 'DELETE' }));\n";
             html += '        loadRecords();\n';
             html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record deactivated.</div>';\n";
             html += '      } catch (err) {\n';
-            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + _esc(err.message) + '</div>';\n";
             html += '      }\n';
             html += '    }\n\n';
 
             html += '    async function activateRecord(id) {\n';
             html += "      if (!confirm('Activate this record?')) return;\n";
             html += '      try {\n';
-            html += "        await _fetch(API + '/' + id + '/activate', { method: 'PUT' });\n";
+            html += "        await _ok(await _fetch(API + '/' + encodeURIComponent(id) + '/activate', { method: 'PUT' }));\n";
             html += '        loadRecords();\n';
             html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record activated.</div>';\n";
             html += '      } catch (err) {\n';
-            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+            html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + _esc(err.message) + '</div>';\n";
             html += '      }\n';
             html += '    }\n\n';
 
@@ -1328,11 +1285,11 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
                 html += '    async function hardDeleteRecord(id) {\n';
                 html += "      if (!confirm('Permanently DELETE this record? This cannot be undone.')) return;\n";
                 html += '      try {\n';
-                html += "        await _fetch(API + '/' + id + '/delete', { method: 'POST' });\n";
+                html += "        await _ok(await _fetch(API + '/' + encodeURIComponent(id) + '/delete', { method: 'POST' }));\n";
                 html += '        loadRecords();\n';
                 html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-success\\\">Record permanently deleted.</div>';\n";
                 html += '      } catch (err) {\n';
-                html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + err.message + '</div>';\n";
+                html += "        document.getElementById('formMessage').innerHTML = '<div class=\\\"message message-error\\\">' + _esc(err.message) + '</div>';\n";
                 html += '      }\n';
                 html += '    }\n\n';
             }
@@ -1340,7 +1297,7 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
             html += '    async function deleteRecord(id) {\n';
             html += "      if (!confirm('Delete this record?')) return;\n";
             html += '      try {\n';
-            html += "        await _fetch(API + '/' + id, { method: 'DELETE' });\n";
+            html += "        await _ok(await _fetch(API + '/' + encodeURIComponent(id), { method: 'DELETE' }));\n";
             html += '        loadRecords();\n';
             html += '      } catch (err) {\n';
             html += '        alert(err.message);\n';
@@ -1366,49 +1323,50 @@ html += "      unchecked.forEach(function(checkbox) { if (checkbox.name) data[ch
     }
 
     _generateActionRouteCode(route) {
+        const J = v => JSON.stringify(v);
         let code = `\n// Action Route: ${route.name} - ${route.description || ''}\n`;
         const method = (route.method || 'POST').toLowerCase();
         const authMiddleware = route.useJwt ? ', authenticate' : '';
         code += `app.${method}('/api/${route.name}'${authMiddleware}, async (req, res) => {\n`;
         code += `    try {\n`;
-        if (route.useJwt && route.identityField) {
-            code += `        const userId = req.user.id;\n`;
-        }
-        if (route.preChecks && route.preChecks.length > 0) {
-            for (const pc of route.preChecks) {
-                const identity = pc.identityField || route.identityField;
-                code += `        const ${pc.checkTable}Check = db.prepare(\`SELECT ${pc.checkField} FROM ${pc.checkTable} WHERE ${identity} = ?\`).get(userId);\n`;
-                code += `        if (!${pc.checkTable}Check || !(${pc.checkTable}Check.${pc.checkField} ${pc.operator} '${pc.checkValue}')) {\n`;
-                code += `            return res.status(403).json({ error: '${pc.errorMessage || 'Pre-check failed'}' });\n`;
-                code += `        }\n`;
-            }
-        }
-        if (route.limitChecks && route.limitChecks.length > 0) {
-            for (const lc of route.limitChecks) {
-                code += `        const count = db.prepare(\`SELECT COUNT(*) as cnt FROM ${lc.countTable} WHERE ${lc.groupField} = ?\`).get(userId);\n`;
-                if (lc.limitTable && lc.limitField) {
-                    code += `        const limit = db.prepare(\`SELECT ${lc.limitField} FROM ${lc.limitTable} LIMIT 1\`).get();\n`;
-                    code += `        if (count.cnt >= limit.${lc.limitField}) {\n`;
-                    code += `            return res.status(403).json({ error: '${lc.errorMessage || 'Limit exceeded'}' });\n`;
-                    code += `        }\n`;
-                }
-            }
-        }
+        code += `      const outcome = db.transaction(() => {\n`;
+        // Logged-in user when JWT is on, otherwise the identity sent in the body
+        const idField = route.identityField || 'id';
+        code += `        const userId = req.user && req.user.id != null ? req.user.id : (req.body || {})[${J(idField)}];\n`;
+        (route.preChecks || []).forEach((pc, i) => {
+            const identity = pc.identityField || idField;
+            const op = ['=', '!=', '<', '<=', '>', '>='].includes(pc.operator) ? pc.operator : '=';
+            const jsOp = op === '=' ? '==' : op;
+            code += `        const pre${i} = db.prepare(${J(`SELECT ${pc.checkField} AS v FROM ${pc.checkTable} WHERE ${identity} = ?`)}).get(userId);\n`;
+            code += `        if (!pre${i} || !(pre${i}.v ${jsOp} ${J(String(pc.checkValue))})) {\n`;
+            code += `            return { status: 403, body: { error: ${J(pc.errorMessage || 'Pre-check failed')} } };\n`;
+            code += `        }\n`;
+        });
+        (route.limitChecks || []).forEach((lc, i) => {
+            if (!lc.limitTable || !lc.limitField) return;
+            code += `        const count${i} = db.prepare(${J(`SELECT COUNT(*) AS cnt FROM ${lc.countTable} WHERE ${lc.groupField} = ?`)}).get(userId);\n`;
+            code += `        const limit${i} = db.prepare(${J(`SELECT ${lc.limitField} AS lim FROM ${lc.limitTable} LIMIT 1`)}).get();\n`;
+            code += `        if (limit${i} && count${i}.cnt >= limit${i}.lim) {\n`;
+            code += `            return { status: 403, body: { error: ${J(lc.errorMessage || 'Limit exceeded')} } };\n`;
+            code += `        }\n`;
+        });
+        code += `        let result = null;\n`;
         const table = this.schemaRegistry.getTable(route.targetTable);
         if (table) {
-            const nonPK = (table.fields || []).filter(f => !f.pk);
-            const cols = nonPK.map(f => f.name).join(', ');
-            code += `        const stmt = db.prepare(\`INSERT INTO ${route.targetTable} (${cols}) VALUES (${nonPK.map(() => '?').join(', ')})\`);\n`;
-            code += `        const result = stmt.run(${nonPK.map(f => `req.body.${f.name}`).join(', ')});\n`;
+            const cols = (table.fields || []).filter(f => !(f.pk && f.type === 'INTEGER'));
+            const sql = cols.length ? `INSERT INTO ${route.targetTable} (${cols.map(f => f.name).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})` : `INSERT INTO ${route.targetTable} DEFAULT VALUES`;
+            code += `        result = db.prepare(${J(sql)}).run(${cols.map(f => this.codeGen._isAutoTimestampField(route.targetTable, f.name) ? 'new Date().toISOString()' : `(req.body[${J(f.name)}] ?? ${f.default === undefined ? 'null' : J(f.default)})`).join(', ')});\n`;
         }
-        if (route.postActions && route.postActions.length > 0) {
-            for (const pa of route.postActions) {
-                code += `        db.prepare(\`UPDATE ${pa.setTable} SET ${pa.setField} = ${pa.setValue} WHERE ${pa.whereField} = ?\`).run(req.body.${pa.whereField});\n`;
-            }
+        for (const pa of route.postActions || []) {
+            const sql = `UPDATE ${pa.setTable} SET ${pa.setField} = ${this.ruleEngine._sqlValueExpr(pa.setValue)} WHERE ${pa.whereField} = ?`;
+            code += `        db.prepare(${J(sql)}).run(req.body[${J(pa.whereSourceField || pa.whereField)}]);\n`;
         }
-        code += `        res.status(201).json({ success: true, id: result ? result.lastInsertRowid : null });\n`;
+        const idExpr = table && this.codeGen._pkIsManual(route.targetTable) ? `req.body[${J(this._getPK(route.targetTable))}]` : 'result.lastInsertRowid';
+        code += `        return { status: 201, body: { success: true, id: result ? ${idExpr} : null } };\n`;
+        code += `      })();\n`;
+        code += `      res.status(outcome.status).json(outcome.body);\n`;
         code += `    } catch (err) {\n`;
-        code += `        console.error('Error in ${route.name}:', err);\n`;
+        code += `        console.error(${J('Error in ' + route.name + ':')}, err);\n`;
         code += `        res.status(500).json({ error: err.message });\n`;
         code += `    }\n`;
         code += `});\n`;

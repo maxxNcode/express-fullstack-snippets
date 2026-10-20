@@ -26,6 +26,12 @@ class AppGenerator {
         let serverCode = '';
         let htmlCode = '';
         let jsCode = '';
+        let envContent = '';
+        const businessRules = options.businessRules || [];
+        if (businessRules.length) {
+            const { RuleEngine } = require('./ruleEngine');
+            serverCode += new RuleEngine(this.schemaRegistry).generateAll(businessRules);
+        }
 
         if (!tableConfigs || tableConfigs.length === 0) {
             return { server: '// No tables selected', html: '', js: '' };
@@ -35,25 +41,26 @@ class AppGenerator {
         for (const config of tableConfigs) {
             const table = this.schemaRegistry.getTable(config.tableName);
             if (!table) continue;
+            const htmlStart = htmlCode.length;
+            const jsStart = jsCode.length;
 
+            // CREATE must precede prepared statements.
+            if (config.createTable) serverCode += this.codeGen.generateCreateTable(config.tableName) + '\n\n';
             // CRUD (prep statements + routes) — goes in server.js
             if (config.crud !== false) {
                 serverCode += this.codeGen.generatePrepStatements(config.tableName) + '\n\n';
-                serverCode += this.codeGen.generateCrudRoutes(config.tableName) + '\n\n';
+                serverCode += this.codeGen.generateCrudRoutes(config.tableName, { withRules: !!businessRules.length }) + '\n\n';
             }
 
             // CREATE TABLE SQL
-            if (config.createTable) {
-                serverCode += this.codeGen.generateCreateTable(config.tableName) + '\n\n';
-            }
 
             // HTML list — goes in index.html
-            if (config.list) {
+            if (config.list && !config.page) {
                 htmlCode += this.codeGen.generateListHtml(config.tableName) + '\n\n';
             }
 
             // HTML form
-            if (config.form) {
+            if (config.form && !config.page) {
                 htmlCode += this.codeGen.generateFormHtml(config.tableName) + '\n\n';
             }
 
@@ -63,14 +70,25 @@ class AppGenerator {
             }
 
             // JS fetch + render
-            if (config.listJs) {
+            if (config.listJs && !config.list && !config.page) {
                 jsCode += this.codeGen.generateListJs(config.tableName) + '\n\n';
             }
 
             // JS form handlers
             if (config.formJs) {
-                jsCode += this.codeGen.generateFormJs(config.tableName) + '\n\n';
+                const formJs = `const API = ${JSON.stringify('/api/' + config.tableName.toLowerCase())};\n` + this.codeGen.generateFormJs(config.tableName);
+                jsCode += formJs + '\n\n';
             }
+            const namespace = text => text.replace(/\bAPI\b/g, 'API_' + config.tableName)
+                .replace(/\beditingId\b/g, 'editingId_' + config.tableName)
+                .replace(/\bsaveBtn\b/g, 'saveBtn_' + config.tableName);
+            const scope = script => {
+                const exports = [...script.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+(\w+)\s*\(/g)].map(m => `window.${m[1]} = ${m[1]};`).join('\n');
+                return '(function() {\n' + script + '\n' + exports + '\n})();\n';
+            };
+            htmlCode = htmlCode.slice(0, htmlStart) + namespace(htmlCode.slice(htmlStart)).replace(/<script>([\s\S]*?)<\/script>/g, (_, script) => '<script>' + scope(script) + '</script>');
+            const tableJs = namespace(jsCode.slice(jsStart));
+            jsCode = jsCode.slice(0, jsStart) + (tableJs ? scope(tableJs) : '');
         }
 
         // 2. Generate Auth if configured
@@ -105,10 +123,9 @@ class AppGenerator {
                     { useJwt: authConfig.useJwt !== false }
                 );
                 serverCode += '\n\n';
-                serverCode += this.authGen.generateEnvContent(
+                envContent = this.authGen.generateEnvContent(
                     authConfig.tableName, { useJwt: authConfig.useJwt !== false }
                 );
-                serverCode += '\n\n';
             }
 
             // Auth HTML form
@@ -125,7 +142,8 @@ class AppGenerator {
 
         // 3. Wrap with Express boilerplate if needed
         if (options.includeServerBoilerplate) {
-            serverCode = this._wrapServer(serverCode);
+            const { Scaffer } = require('./scaffolder');
+            serverCode = new Scaffer(this.schemaRegistry)._generateServer('Generated app', tableConfigs.filter(c => c.crud !== false).map(c => c.tableName), authConfig, businessRules, [], 3000);
         }
         if (options.includeHtmlBoilerplate) {
             htmlCode = this._wrapHtml(htmlCode);
@@ -134,7 +152,8 @@ class AppGenerator {
         return {
             server: serverCode,
             html: htmlCode,
-            js: jsCode
+            js: jsCode,
+            env: envContent
         };
     }
 

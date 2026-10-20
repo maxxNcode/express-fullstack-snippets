@@ -14,6 +14,7 @@ const { CodeGenerator } = require('./generator');
 const { SchemaViewProvider } = require('./schemaView');
 const { MysqlToSqliteConverter } = require('./mysqlToSqlite');
 const { generateProjectFiles } = require('./projectGenerator');
+const dependencyChecker = require('./dependencyChecker');
 
 let serverManager;
 let aiClient;
@@ -27,12 +28,15 @@ function activate(context) {
     serverManager = new ServerManager();
     aiClient = new AiClient();
 
+    dependencyChecker.register(context);
+
     schemaRegistry = new SchemaRegistry();
     schemaViewProvider = new SchemaViewProvider(context, schemaRegistry);
     let codeGenerator = null;
+    let schemaReady = Promise.resolve();
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
     if (workspaceRoot) {
-        schemaRegistry.init(workspaceRoot).then(() => {
+        schemaReady = schemaRegistry.init(workspaceRoot).then(() => {
             codeGenerator = new CodeGenerator(schemaRegistry);
             schemaViewProvider.setGenerator(codeGenerator);
             dynamicProvider = new DynamicSnippetProvider(schemaRegistry);
@@ -45,12 +49,18 @@ function activate(context) {
         }).catch(err => vscode.window.showErrorMessage(`njs: Failed to load schema: ${err.message}`));
     }
 
+    const registerCommand = (name, handler) => vscode.commands.registerCommand(name, async (...args) => {
+        await schemaReady;
+        return handler(...args);
+    });
+
     fkManager = new FkManager(schemaRegistry);
 
     // Always-on njs: register / remove / modify handler (AI-independent)
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument(async (event) => {
             if (!NJS_LANGUAGES.has(event.document.languageId)) return;
+            await schemaReady;
             const prefix = vscode.workspace.getConfiguration('node-sqlite-ai').get('magicPrefix') || 'njs:';
             for (const change of event.contentChanges) {
                 const text = change.text;
@@ -173,12 +183,12 @@ function activate(context) {
     }
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.enable', () => startAi(false)),
-        vscode.commands.registerCommand('node-sqlite-ai.trained-enable', () => startAi(true))
+        registerCommand('node-sqlite-ai.enable', () => startAi(false)),
+        registerCommand('node-sqlite-ai.trained-enable', () => startAi(true))
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.disable', async () => {
+        registerCommand('node-sqlite-ai.disable', async () => {
             if (magicHandler) {
                 magicHandler.dispose();
                 magicHandler = null;
@@ -191,7 +201,7 @@ function activate(context) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.fixSelection', async () => {
+        registerCommand('node-sqlite-ai.fixSelection', async () => {
             if (!magicHandler) {
                 vscode.window.showErrorMessage('AI: Turn on AI first (AI: Turn On or AI: Trained On)');
                 return;
@@ -235,7 +245,7 @@ function activate(context) {
 
     // Schema commands
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.registerTable', async () => {
+        registerCommand('node-sqlite-ai.registerTable', async () => {
             const tableName = await vscode.window.showInputBox({
                 prompt: 'Table name',
                 placeHolder: 'e.g. Items',
@@ -261,7 +271,7 @@ function activate(context) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.removeTable', async () => {
+        registerCommand('node-sqlite-ai.removeTable', async () => {
             const tables = schemaRegistry.getTables();
             if (!tables.length) {
                 vscode.window.showInformationMessage('njs: No tables to remove');
@@ -282,7 +292,7 @@ function activate(context) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.modifyTable', async () => {
+        registerCommand('node-sqlite-ai.modifyTable', async () => {
             const tables = schemaRegistry.getTables();
             if (!tables.length) {
                 vscode.window.showInformationMessage('njs: No tables to modify');
@@ -317,7 +327,7 @@ function activate(context) {
 
     // New command: Register from selected CREATE TABLE SQL
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.registerFromSql', async () => {
+        registerCommand('node-sqlite-ai.registerFromSql', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showErrorMessage('njs: Open a file first');
@@ -370,7 +380,7 @@ function activate(context) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.showStatus', async () => {
+        registerCommand('node-sqlite-ai.showStatus', async () => {
             const tables = schemaRegistry.getTables();
             if (!tables.length) {
                 vscode.window.showInformationMessage('njs: No tables registered');
@@ -391,25 +401,25 @@ function activate(context) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.manageFK', async () => {
+        registerCommand('node-sqlite-ai.manageFK', async () => {
             try { await fkManager.addForeignKey(); } catch (err) { vscode.window.showErrorMessage(`njs: ${err.message}`); }
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.removeFK', async () => {
+        registerCommand('node-sqlite-ai.removeFK', async () => {
             try { await fkManager.removeForeignKey(); } catch (err) { vscode.window.showErrorMessage(`njs: ${err.message}`); }
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.openSchemaView', () => {
+        registerCommand('node-sqlite-ai.openSchemaView', () => {
             schemaViewProvider.show();
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.generateAll', async () => {
+        registerCommand('node-sqlite-ai.generateAll', async () => {
             const gen = codeGenerator || new CodeGenerator(schemaRegistry);
             const tables = schemaRegistry.getTables();
             if (!tables.length) {
@@ -430,14 +440,14 @@ function activate(context) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.generateProject', async () => {
+        registerCommand('node-sqlite-ai.generateProject', async () => {
             await generateProjectFiles(schemaRegistry);
         })
     );
 
     // TailwindCSS CLI setup
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.tailwindSetup', async () => {
+        registerCommand('node-sqlite-ai.tailwindSetup', async () => {
             const root = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
             if (!root) {
                 vscode.window.showErrorMessage('njs: Open a folder first');
@@ -475,16 +485,16 @@ function activate(context) {
                 }
                 await vscode.workspace.fs.writeFile(pkgPath, Buffer.from(JSON.stringify(pkg, null, 2), 'utf-8'));
                 terminal.sendText('npm run css:watch');
-                vscode.window.showInformationMessage('njs: TailwindCSS setup done! npm run css:watch is running.');
-            } catch {
-                vscode.window.showInformationMessage('njs: TailwindCSS installed. Add scripts manually if no package.json.');
+                vscode.window.showInformationMessage('njs: TailwindCSS files configured. Installation and watcher commands were sent to the terminal; check their output.');
+            } catch (err) {
+                vscode.window.showWarningMessage(`njs: TailwindCSS setup incomplete: ${err.message}. Check the terminal and add package scripts manually.`);
             }
         })
     );
 
     // MySQL Schema to SQLite converter
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.parseMysqlSchema', async () => {
+        registerCommand('node-sqlite-ai.parseMysqlSchema', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showErrorMessage('njs: Open a file first');
@@ -516,7 +526,7 @@ function activate(context) {
 
     // MySQL INSERT to SQLite converter
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.parseMysqlInsert', async () => {
+        registerCommand('node-sqlite-ai.parseMysqlInsert', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showErrorMessage('njs: Open a file first');

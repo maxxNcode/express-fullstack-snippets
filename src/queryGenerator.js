@@ -219,8 +219,7 @@ class QueryGenerator {
         const sql = this.generateQuerySql(columns, filters, sortBy, limit, groupBy, having, distinct, joinType);
         const stmtName = 'stmt' + queryName.charAt(0).toUpperCase() + queryName.slice(1);
         let server = '// --- ' + queryName + ' ---\n';
-        var escapedSql = sql.replace(/'/g, "''").replace(/\n/g, '\\n');
-        server += 'const ' + stmtName + " = db.prepare('" + escapedSql + "');\n\n";
+        server += 'const ' + stmtName + ' = db.prepare(' + JSON.stringify(sql) + ');\n\n';
         server += '// GET ' + queryName + '\n';
         server += "app.get('" + route + "', (req, res) => {\n";
         server += '  try {\n';
@@ -259,8 +258,10 @@ class QueryGenerator {
         html += '<script>\n';
         html += '(async function() {\n';
         html += "  var _fetch = typeof authFetch === 'function' ? authFetch : fetch;\n";
+        html += "  var _esc = function(v) { return String(v == null ? '' : v).replace(/[&<>\"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]; }); };\n";
         html += '  try {\n';
         html += "    var res = await _fetch('" + route + "');\n";
+        html += "    if (!res.ok) throw new Error('HTTP ' + res.status);\n";
         html += '    var items = await res.json();\n';
         html += "    var container = document.getElementById('" + containerId + "');\n";
         html += "    if (!container) return;\n";
@@ -269,7 +270,7 @@ class QueryGenerator {
         html += "      var fields = Object.entries(item).map(function(kv) {\n";
         html += "        var key = kv[0].replace(/_/g, ' ').replace(/\\b\\w/g, function(l) { return l.toUpperCase(); });\n";
         html += "        var val = kv[1] != null ? kv[1] : '';\n";
-        html += "        return '<div class=\"card-field\"><label>' + key + '</label><span>' + val + '</span></div>';\n";
+        html += "        return '<div class=\"card-field\"><label>' + _esc(key) + '</label><span>' + _esc(val) + '</span></div>';\n";
         html += "      }).join('');\n";
         html += "      return '<div class=\"card\">' + fields + '</div>';\n";
         html += "    }).join('');\n";
@@ -294,10 +295,11 @@ class QueryGenerator {
     generateReportHtml(reportName, columns, displayConfig, options = {}) {
         const route = '/api/' + reportName;
         const title = options.title || reportName.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+        const escHtml = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
         // Build display config from columns if not provided
         const displays = displayConfig || columns.map(c => ({
-            field: c.field,
+            field: c.table ? c.table + '_' + c.field : c.field,
             label: c.field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
             format: 'text'
         }));
@@ -306,17 +308,17 @@ class QueryGenerator {
         const hasPercentage = displays.some(d => d.format === 'percentage' || d.format === 'progress');
 
         let html = '';
-        html += '<!-- ========= ' + title + ' Report ========= -->\n';
-        html += '// SAVE THIS AS: ' + reportName + '.html (place in your public/ folder)\n';
-        html += '// ============================================= -->\n\n';
         html += '<!DOCTYPE html>\n';
+        html += '<!-- ' + escHtml(reportName) + '.html: ' + escHtml(title) + ' report -->\n';
         html += '<html lang="en">\n';
         html += '<head>\n';
         html += '  <meta charset="UTF-8">\n';
         html += '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n';
-        html += '  <title>' + title + '</title>\n';
-        html += '  <script src="auth.js"></script>\n';
-        html += '  <script>redirectIfNotAuthenticated();</script>\n';
+        html += '  <title>' + escHtml(title) + '</title>\n';
+        if (options.useAuth !== false) {
+            html += '  <script src="auth.js"></script>\n';
+            html += '  <script>redirectIfNotAuthenticated();</script>\n';
+        }
         html += '  <style>\n';
         html += '    * { margin: 0; padding: 0; box-sizing: border-box; }\n';
         html += '    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f0f2f5; padding: 20px; }\n';
@@ -356,67 +358,54 @@ class QueryGenerator {
         html += '    <a href="/login.html" onclick="logout()" style="margin-left:auto;">Logout</a>\n';
         html += '  </div>\n';
         html += '  <div class="container">\n';
-        html += '    <h1>' + title + '</h1>\n';
+        html += '    <h1>' + escHtml(title) + '</h1>\n';
         html += '    <div id="reportContent">\n';
         html += '      <div class="loading">Loading report data...</div>\n';
         html += '    </div>\n';
         html += '  </div>\n';
+        // Report SQL aliases every base column as Table_field; resolve each display column to that key
+        const cfg = displays.map(d => {
+            const col = (columns || []).find(c => c.field === d.field || (c.table + '_' + c.field) === d.field);
+            return {
+                key: col && col.table ? col.table + '_' + col.field : d.field,
+                label: d.label || d.field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                format: d.format || 'text'
+            };
+        });
         html += '  <script>\n';
-        html += '    const API = "' + route + '";\n\n';
+        html += '    const API = ' + JSON.stringify(route) + ';\n';
+        html += '    const COLS = ' + JSON.stringify(cfg).replace(/</g, '\\u003c') + ';\n\n';
+        html += '    function esc(v) {\n';
+        html += "      return String(v == null ? '' : v).replace(/[&<>\"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]; });\n";
+        html += '    }\n\n';
+        html += '    function cell(col, v) {\n';
+        html += '      switch (col.format) {\n';
+        html += "        case 'percentage': return (v != null ? Number(v).toFixed(2) : '0') + '%';\n";
+        html += "        case 'progress': var p = Number(v) || 0; return '<div style=\"display:flex;align-items:center;\"><span class=\"percent-bar\" style=\"width:' + Math.min(p, 100) + 'px\"></span>' + p.toFixed(1) + '%</div>';\n";
+        html += "        case 'rank': var n = Number(v); return '<span class=\"rank-badge ' + (n >= 1 && n <= 3 ? 'rank-' + n : 'rank-default') + '\">#' + esc(v) + '</span>';\n";
+        html += "        case 'currency': return '\\u20b1' + (v != null ? Number(v).toFixed(2) : '0.00');\n";
+        html += "        case 'boolean': return v ? '\\u2713 Yes' : '\\u2717 No';\n";
+        html += '        default: return esc(v);\n';
+        html += '      }\n';
+        html += '    }\n\n';
         html += '    async function loadReport() {\n';
         html += "      const container = document.getElementById('reportContent');\n";
         html += '      try {\n';
-        html += '        const res = await authFetch(API);\n';
-        html += "        if (!res.ok) throw new Error('Failed to load report');\n";
-        html += '        const data = await res.json();\n\n';
+        html += "        const res = await (typeof authFetch === 'function' ? authFetch : fetch)(API);\n";
+        html += "        if (!res.ok) throw new Error('Failed to load report (' + res.status + ')');\n";
+        html += '        const data = await res.json();\n';
         html += '        if (!data || data.length === 0) {\n';
         html += "          container.innerHTML = '<p style=\"text-align:center;color:#888;padding:40px;\">No data available.</p>';\n";
         html += '          return;\n';
-        html += '        }\n\n';
-        html += "        var html = '<table><thead><tr>';\n";
-
-        // Generate table headers
-        for (const d of displays) {
-            html += "        html += '<th>" + (d.label || d.field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())) + "</th>';\n";
-        }
-
-        html += "        html += '</tr></thead><tbody>';\n\n";
-        html += '        data.forEach(function(row, idx) {\n';
-        html += '          var cls = "";\n';
-        if (hasRank) {
-            html += '          if (row.rank === 1) cls = "winner-row";\n';
-        }
-        html += '          html += "<tr class=\"" + cls + "\">";\n';
-
-        // Generate data cells with formatting
-        for (const d of displays) {
-            const f = d.field;
-            if (d.format === 'percentage') {
-                html += '          html += "<td>" + (row.' + f + ' != null ? Number(row.' + f + ').toFixed(2) + \'%\' : \'0%\') + "</td>";\n';
-            } else if (d.format === 'progress') {
-                html += '          var pct_' + f + ' = Number(row.' + f + ') || 0;\n';
-                html += '          html += \'<td><div style="display:flex;align-items:center;"><span class="percent-bar" style="width:\' + Math.min(pct_' + f + ', 100) + \'px"></span>\' + pct_' + f + '.toFixed(1) + \'%\' + \'</div></td>\';\n';
-            } else if (d.format === 'rank') {
-                html += '          var rc = "rank-default";\n';
-                html += '          if (row.' + f + ' === 1) rc = "rank-1";\n';
-                html += '          else if (row.' + f + ' === 2) rc = "rank-2";\n';
-                html += '          else if (row.' + f + ' === 3) rc = "rank-3";\n';
-                html += '          html += \'<td><span class="rank-badge \' + rc + \'">#\' + row.' + f + ' + \'</span></td>\';\n';
-            } else if (d.format === 'currency') {
-                html += '          html += "<td>" + (row.' + f + ' != null ? \'₱\' + Number(row.' + f + ').toFixed(2) : \'₱0.00\') + "</td>";\n';
-            } else if (d.format === 'boolean') {
-                html += '          html += "<td>" + (row.' + f + ' ? \'✓ Yes\' : \'✗ No\') + "</td>";\n';
-            } else {
-                html += '          html += "<td>" + (row.' + f + ' != null ? row.' + f + ' : \'\') + "</td>";\n';
-            }
-        }
-
-        html += '          html += "</tr>";\n';
-        html += '        });\n\n';
-        html += "        html += '</tbody></table>';\n";
-        html += '        container.innerHTML = html;\n';
+        html += '        }\n';
+        html += "        var out = '<table><thead><tr>' + COLS.map(function(c) { return '<th>' + esc(c.label) + '</th>'; }).join('') + '</tr></thead><tbody>';\n";
+        html += '        data.forEach(function(row) {\n';
+        html += "          var winner = COLS.some(function(c) { return c.format === 'rank' && Number(row[c.key]) === 1; });\n";
+        html += "          out += '<tr' + (winner ? ' class=\"winner-row\"' : '') + '>' + COLS.map(function(c) { return '<td>' + cell(c, row[c.key]) + '</td>'; }).join('') + '</tr>';\n";
+        html += '        });\n';
+        html += "        container.innerHTML = out + '</tbody></table>';\n";
         html += '      } catch (err) {\n';
-        html += '        container.innerHTML = \'<div class="error">\' + err.message + \'</div>\';\n';
+        html += "        container.innerHTML = '<div class=\"error\">' + esc(err.message) + '</div>';\n";
         html += '      }\n';
         html += '    }\n\n';
         html += '    loadReport();\n';
@@ -449,8 +438,7 @@ class QueryGenerator {
 
         let server = '';
         server += '// --- Report: ' + reportName + ' ---\n';
-        const escapedSql = sql.replace(/`/g, '\\`').replace(/\$/g, '\\$');
-        server += 'const ' + stmtName + ' = db.prepare(`' + escapedSql + '`);\n\n';
+        server += 'const ' + stmtName + ' = db.prepare(' + JSON.stringify(sql) + ');\n\n';
         server += '// GET ' + reportName + ' (requires authentication)\n';
         server += "app.get('" + route + "', authenticate, (req, res) => {\n";
         server += '  try {\n';
@@ -672,14 +660,16 @@ class QueryGenerator {
         html += '<script>\n';
         html += '(async function() {\n';
         html += "  var _fetch = typeof authFetch === 'function' ? authFetch : fetch;\n";
+        html += "  var _esc = function(v) { return String(v == null ? '' : v).replace(/[&<>\"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]; }); };\n";
         html += '  try {\n';
         html += "    var res = await _fetch('" + route + "');\n";
+        html += "    if (!res.ok) throw new Error('HTTP ' + res.status);\n";
         html += '    var items = await res.json();\n';
         html += "    var tbody = document.getElementById('" + tbodyId + "');\n";
         html += "    if (!tbody) return;\n";
         html += "    if (!items || !items.length) { tbody.innerHTML = '<tr><td colspan=\"" + colCount + "\">No results found.</td></tr>'; return; }\n";
         html += "    tbody.innerHTML = items.map(function(item) {\n";
-        html += "      var vals = Object.values(item).map(function(v) { return '<td>' + (v != null ? v : '') + '</td>'; }).join('');\n";
+        html += "      var vals = Object.values(item).map(function(v) { return '<td>' + _esc(v) + '</td>'; }).join('');\n";
         html += "      return '<tr>' + vals + '</tr>';\n";
         html += "    }).join('');\n";
         html += '  } catch(e) { console.error(\'Failed to load ' + queryName + '\', e); }\n';
