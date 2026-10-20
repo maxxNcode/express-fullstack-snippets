@@ -1430,7 +1430,7 @@ class SchemaViewProvider {
             } else if (rule.type === 'postAction') {
                 desc = `After ${rule.action || 'INSERT'} on ${rule.targetTable}, SET ${rule.setTable}.${rule.setField} = ${rule.setValue}`;
             }
-            const ruleJson = this._jsStr(JSON.stringify(rule));
+            const ruleJson = this._escapeHtml(this._jsStr(JSON.stringify(rule)));
             return `<div class="saved-rule-item" onclick="editRule(${idx}, '${ruleJson}')" style="cursor:pointer;" title="Click to edit this rule">
                 <span><span class="sq-name">${rule.type}</span><span class="sq-info">${this._escapeHtml(desc)}</span></span>
                 <span class="sq-actions">

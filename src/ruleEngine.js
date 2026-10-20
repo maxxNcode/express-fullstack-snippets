@@ -300,8 +300,10 @@ class RuleEngine {
                 code += '    }\n\n';
             } else if (rule.operator === 'EXISTS') {
                 // Check if a record exists that satisfies a condition
-                const condition = rule.condition || `req.body.${rule.field} = ${rule.checkTable}.${rule.checkField}`;
-                code += `    const exists${i} = db.prepare(\`SELECT 1 FROM ${rule.checkTable} WHERE ${condition}\`).get();\n`;
+                // Default condition binds the request value as a param; "req.body.x" inside SQL is not valid SQL
+                const condition = rule.condition || `${rule.checkTable}.${rule.checkField} = ?`;
+                const params = rule.condition ? '' : `req.body.${rule.field}`;
+                code += `    const exists${i} = db.prepare(\`SELECT 1 FROM ${rule.checkTable} WHERE ${condition}\`).get(${params});\n`;
                 code += `    if (!exists${i}) {\n`;
                 code += `      errors.push('${msg.replace(/'/g, "\\'")}');\n`;
                 code += '    }\n\n';

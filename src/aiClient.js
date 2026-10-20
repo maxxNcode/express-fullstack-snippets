@@ -47,6 +47,8 @@ class AiClient {
             );
 
             req.on('error', (err) => reject(new Error(`AI request failed: ${err.message}`)));
+            // Idle-socket timeout: a hung llama-server would otherwise leave the progress spinner forever
+            req.setTimeout(120000, () => req.destroy(new Error('timed out after 120s')));
             req.write(body);
             req.end();
         });
@@ -58,6 +60,7 @@ class AiClient {
                 resolve(res.statusCode === 200);
             });
             req.on('error', () => resolve(false));
+            req.setTimeout(3000, () => req.destroy());
             req.end();
         });
     }

@@ -103,10 +103,14 @@ class CodeGenerator {
         const table = this.schemaRegistry.getTable(tableName);
         if (!table) return '// Table not found';
         const pk = this.getPK(tableName);
-        const nonPK = this.getNonPKFields(tableName);
-        const insertFields = nonPK.map(f => f.name).join(', ');
-        const insertPlaceholders = nonPK.map(() => '?').join(', ');
-        const updateSet = nonPK.map(f => `${f.name} = ?`).join(', ');
+        // Column order must match the .run() params in generateCrudRoutes: user fields first, then timestamps
+        const { created, updated } = this._getAutoTimestampFields(tableName);
+        const userCols = this.getNonPKFields(tableName).map(f => f.name).filter(n => n !== created?.name && n !== updated?.name);
+        const insertCols = userCols.concat(created ? [created.name] : [], updated ? [updated.name] : []);
+        const updateCols = userCols.concat(updated ? [updated.name] : []);
+        const insertFields = insertCols.join(', ');
+        const insertPlaceholders = insertCols.map(() => '?').join(', ');
+        const updateSet = updateCols.map(n => `${n} = ?`).join(', ');
         const statField = this.getStatField(tableName);
         const varPrefix = tableName.charAt(0).toLowerCase() + tableName.slice(1);
 
@@ -205,7 +209,9 @@ class CodeGenerator {
             routes += `    res.status(500).json({ error: err.message });\n`;
             routes += `  }\n`;
             routes += `});\n\n`;
+        }
 
+        if (userNonPK.length > 0 || autoUpdated) {
             routes += `// Update ${tableName}\n`;
             const updateMethod = this._getEditMode(tableName);
             routes += `app.${updateMethod}('${itemRoute}', (req, res) => {\n`;

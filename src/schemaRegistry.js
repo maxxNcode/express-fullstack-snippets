@@ -20,7 +20,12 @@ class SchemaRegistry {
             } catch (repairErr) {
                 console.error('njs: Schema repair error:', repairErr);
             }
-        } catch {
+        } catch (err) {
+            // Corrupt file: keep a copy so the next save() doesn't silently destroy the user's schema
+            if (err.code !== 'ENOENT') {
+                console.error('njs: Could not parse schema file, backed up to .bak:', err.message);
+                await fs.promises.copyFile(this.schemaPath, this.schemaPath + '.bak').catch(() => {});
+            }
             this.schema = { tables: {}, screens: [] };
         }
         return true;
@@ -123,6 +128,7 @@ class SchemaRegistry {
             for (const f of table.fields) {
                 if (f.fk && f.fk.table === name) delete f.fk;
             }
+            if (table.constraints) table.constraints = table.constraints.filter(c => c.refTable !== name);
         }
         await this.save();
     }
@@ -159,6 +165,14 @@ class SchemaRegistry {
         const table = this.schema.tables[tableName];
         if (!table) throw new Error(`Table "${tableName}" not found`);
         table.fields = table.fields.filter(f => f.name !== fieldName);
+        // A constraint naming a missing column makes the generated CREATE TABLE fail
+        if (table.constraints) table.constraints = table.constraints.filter(c => !c.columns?.includes(fieldName));
+        for (const t of Object.values(this.schema.tables)) {
+            for (const f of t.fields) {
+                if (f.fk && f.fk.table === tableName && f.fk.field === fieldName) delete f.fk;
+            }
+            if (t.constraints) t.constraints = t.constraints.filter(c => !(c.refTable === tableName && c.refColumns?.includes(fieldName)));
+        }
         await this.save();
     }
 
@@ -426,13 +440,14 @@ class SchemaRegistry {
                     field.pk = true;
                     if (field.type === 'TEXT') field.type = 'INTEGER';
                     i++;
-                } else if (/^AUTOINCREMENT|AUTO_INCREMENT$/.test(t)) {
+                } else if (/^(AUTOINCREMENT|AUTO_INCREMENT)$/.test(t)) {
                     field.autoIncrement = true;
                 } else if (t === 'NOT' && tokens[i + 1]?.toUpperCase() === 'NULL') {
                     field.notNull = true;
                     i++;
                 } else if (t === 'DEFAULT') {
                     let dv = tokens[++i];
+                    if (dv === undefined) break;
                     if ((dv.startsWith("'") && dv.endsWith("'")) || (dv.startsWith('"') && dv.endsWith('"'))) {
                         dv = dv.slice(1, -1);
                     }
@@ -489,9 +504,9 @@ class SchemaRegistry {
         if (/^(INTEGER|INT|BIGINT|SMALLINT|TINYINT|MEDIUMINT|INT2|INT8)$/.test(t)) return 'INTEGER';
         if (/^(REAL|FLOAT|DOUBLE|NUMERIC|DECIMAL|NUMBER)$/.test(t)) return 'REAL';
         if (/^(TEXT|VARCHAR|CHARACTER?|NVARCHAR|NCHAR|CLOB|LONGTEXT|MEDIUMTEXT|TINYTEXT|CHAR)$/.test(t)) return 'TEXT';
-        if (/^BLOB|LONGBLOB|MEDIUMBLOB|TINYBLOB|BINARY|VARBINARY$/.test(t)) return 'BLOB';
+        if (/^(BLOB|LONGBLOB|MEDIUMBLOB|TINYBLOB|BINARY|VARBINARY)$/.test(t)) return 'BLOB';
         if (/^(DATE|DATETIME|TIMESTAMP|TIME|YEAR)$/.test(t)) return 'TEXT';
-        if (/^BOOLEAN|BOOL|BIT$/.test(t)) return 'INTEGER';
+        if (/^(BOOLEAN|BOOL|BIT)$/.test(t)) return 'INTEGER';
         if (/^(SERIAL|UNSIGNED)/.test(t)) return 'INTEGER';
         return 'TEXT';
     }
@@ -663,6 +678,7 @@ class SchemaRegistry {
                 // DEFAULT value
                 if (t === 'DEFAULT') {
                     let dv = tokens[++i];
+                    if (dv === undefined) break;
                     if (dv.toUpperCase() === 'NULL') {
                         field.default = null;
                     } else if (['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME'].includes(dv.toUpperCase())) {

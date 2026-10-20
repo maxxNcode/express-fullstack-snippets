@@ -599,6 +599,7 @@
         }
 
         // Listen for messages from the extension (query data, run results, etc.)
+        function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
         window.addEventListener('message', function(event) {
             const msg = event.data;
             if (msg.command === 'dbFileList') {
@@ -609,7 +610,7 @@
                 if (msg.files && msg.files.length > 0) {
                     msg.files.forEach(function(f) {
                         var sel = (f === msg.selectedPath) ? ' selected' : '';
-                        html += '<option value="' + f.replace(/'/g, "\\'") + '"' + sel + '>' + f + '</option>';
+                        html += '<option value="' + esc(f) + '"' + sel + '>' + esc(f) + '</option>';
                     });
                 } else {
                     html += '<option value="" disabled>No .db files found in workspace</option>';
@@ -625,7 +626,7 @@
                 var resultsDiv = document.getElementById('queryResults');
                 if (!resultsDiv) return;
                 if (!msg.success) {
-                    resultsDiv.innerHTML = '<div class="qb-results-error">' + (msg.error || 'Unknown error') + '</div>';
+                    resultsDiv.innerHTML = '<div class="qb-results-error">' + esc(msg.error || 'Unknown error') + '</div>';
                 } else {
                     var html = '';
                     html += '<div class="qb-results-info">';
@@ -636,7 +637,7 @@
                         html += '<div class="qb-results-table-wrap"><table class="qb-results-table">';
                         html += '<thead><tr>';
                         msg.results[0].columns.forEach(function(col) {
-                            html += '<th>' + col + '</th>';
+                            html += '<th>' + esc(col) + '</th>';
                         });
                         html += '</tr></thead><tbody>';
                         msg.results[0].rows.forEach(function(row) {

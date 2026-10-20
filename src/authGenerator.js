@@ -125,7 +125,7 @@ class AuthGenerator {
             const dupWhere = identityForDupCheck.map(f => `${f} = ?`).join(' OR ');
             const dupParams = identityForDupCheck.map(f => `req.body.${f}`).join(', ');
             code += `    const existing = db.prepare('SELECT ${identityForDupCheck[0]} FROM ${tableName} WHERE ${dupWhere}').get(${dupParams});\n`;
-            const dupFields = identityForDupCheck.map(f => `'\${req.body.${f}}'`).join(' + " or " + ');
+            const dupFields = identityForDupCheck.map(f => `req.body.${f}`).join(' + " or " + ');
             code += `    if (existing) return res.status(409).json({ error: 'Account with ' + ${dupFields} + ' already exists' });\n\n`;
         } else {
             const firstField = nonPkFields[0] || allFields[0];

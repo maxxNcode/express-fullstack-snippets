@@ -42,7 +42,7 @@ function activate(context) {
                     dynamicProvider
                 )
             );
-        });
+        }).catch(err => vscode.window.showErrorMessage(`njs: Failed to load schema: ${err.message}`));
     }
 
     fkManager = new FkManager(schemaRegistry);
@@ -54,13 +54,15 @@ function activate(context) {
             const prefix = vscode.workspace.getConfiguration('node-sqlite-ai').get('magicPrefix') || 'njs:';
             for (const change of event.contentChanges) {
                 const text = change.text;
-                const isEnter = text === '\n' || text === '\r\n';
+                // Auto-indent appends whitespace after the newline
+                const isEnter = /^\r?\n[ \t]*$/.test(text);
                 if (!isEnter) continue;
                 const lineNum = change.range.start.line;
                 if (lineNum < 0) continue;
                 const lineText = event.document.lineAt(lineNum).text;
-                if (!lineText.startsWith(prefix)) continue;
-                const instruction = lineText.substring(prefix.length).trim();
+                const trimmedLine = lineText.trimStart();
+                if (!trimmedLine.startsWith(prefix)) continue;
+                const instruction = trimmedLine.substring(prefix.length).trim();
                 if (!instruction) continue;
 
                 // njs:register TableName:fieldDef, fieldDef, ...
@@ -213,15 +215,19 @@ function activate(context) {
 
             if (!instruction) return;
 
-            vscode.window.withProgress(
+            await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Window, title: 'AI fixing code...' },
                 async () => {
-                    const response = await magicHandler.fixSelection(selectedText, instruction);
-                    if (!response) return;
+                    try {
+                        const response = await magicHandler.fixSelection(selectedText, instruction);
+                        if (!response) return;
 
-                    const edit = new vscode.WorkspaceEdit();
-                    edit.replace(editor.document.uri, selection, response);
-                    await vscode.workspace.applyEdit(edit);
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.replace(editor.document.uri, selection, response);
+                        await vscode.workspace.applyEdit(edit);
+                    } catch (err) {
+                        vscode.window.showErrorMessage(`njs: AI fix failed: ${err.message}`);
+                    }
                 }
             );
         })
@@ -385,14 +391,14 @@ function activate(context) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('node-sqlite-ai.manageFK', () => {
-            fkManager.addForeignKey();
+        vscode.commands.registerCommand('node-sqlite-ai.manageFK', async () => {
+            try { await fkManager.addForeignKey(); } catch (err) { vscode.window.showErrorMessage(`njs: ${err.message}`); }
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('node-sqlite-ai.removeFK', async () => {
-            fkManager.removeForeignKey();
+            try { await fkManager.removeForeignKey(); } catch (err) { vscode.window.showErrorMessage(`njs: ${err.message}`); }
         })
     );
 
@@ -497,13 +503,10 @@ function activate(context) {
                     vscode.window.showErrorMessage('njs: No CREATE TABLE statements found in selection');
                     return;
                 }
-                editor.edit(editBuilder => {
-                    if (selection.isEmpty) {
-                        editBuilder.insert(selection.active, result);
-                    } else {
-                        editBuilder.replace(selection, result);
-                    }
-                });
+                // Empty selection converted the whole document, so replace all of it instead of inserting a duplicate
+                const doc = editor.document;
+                const range = selection.isEmpty ? new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)) : selection;
+                await editor.edit(editBuilder => editBuilder.replace(range, result));
                 vscode.window.showInformationMessage('njs: MySQL schema converted to SQLite');
             } catch (err) {
                 vscode.window.showErrorMessage(`njs: Conversion error: ${err.message}`);
@@ -532,13 +535,10 @@ function activate(context) {
                     vscode.window.showErrorMessage('njs: No INSERT statements found in selection');
                     return;
                 }
-                editor.edit(editBuilder => {
-                    if (selection.isEmpty) {
-                        editBuilder.insert(selection.active, result);
-                    } else {
-                        editBuilder.replace(selection, result);
-                    }
-                });
+                // Empty selection converted the whole document, so replace all of it instead of inserting a duplicate
+                const doc = editor.document;
+                const range = selection.isEmpty ? new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)) : selection;
+                await editor.edit(editBuilder => editBuilder.replace(range, result));
                 vscode.window.showInformationMessage('njs: MySQL INSERT converted to SQLite');
             } catch (err) {
                 vscode.window.showErrorMessage(`njs: Conversion error: ${err.message}`);
