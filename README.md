@@ -1,7 +1,7 @@
 # NODEJS EXPRESS WORKBENCH
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-4.0.5-blue.svg" alt="Version 4.0.5"/>
+  <img src="https://img.shields.io/badge/version-4.0.6-blue.svg" alt="Version 4.0.6"/>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/VS%20Code-1.74%2B-purple.svg" alt="VS Code 1.74+"/>
 </p>
@@ -27,7 +27,7 @@ Includes **45+ schema-aware snippets** and inline code generation.
 
 1. Open VS Code -> Extensions sidebar (`Ctrl+Shift+X`)
 2. Click `...` (More Actions) -> **Install from VSIX...**
-3. Select `nodejs-express-workbench-4.0.5.vsix`
+3. Select `nodejs-express-workbench-4.0.6.vsix`
 4. Reload VS Code if prompted
 
 ### From VS Code Marketplace

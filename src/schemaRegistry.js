@@ -973,6 +973,7 @@ class SchemaRegistry {
         if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(tableName)) {
             throw new Error(`Invalid table name "${tableName}": must be a valid identifier`);
         }
+        if (SQL_KEYWORDS.has(tableName.toUpperCase())) throw new Error(`Invalid table name "${tableName}": it is an SQL keyword, rename it (e.g. "${tableName}s")`);
         const fieldParts = [];
         let current = '';
         let inQuote = null;
@@ -997,7 +998,8 @@ class SchemaRegistry {
         if (trimmed) fieldParts.push(trimmed);
         const fields = [];
         for (const part of fieldParts) {
-            const tokens = part.split(/\s+/).map(t => t.replace(/[;,]+$/, ''));
+            // Strip the trailing ; per field, not per token, so quoted defaults keep their commas.
+            const tokens = part.replace(/;+$/, '').trim().split(/\s+/);
             const rawName = tokens[0];
             this._validateFieldName(rawName, `"${tableName}"`);
             const field = { name: rawName, type: 'TEXT' };
@@ -1015,7 +1017,10 @@ class SchemaRegistry {
                         dvParts.push(tokens[++i]);
                     }
                     let dv = dvParts.join(' ');
-                    dv = dv.replace(/;+$/, '').replace(/^['"]|['"]$/g, '');
+                    dv = dv.replace(/;+$/, '');
+                    const q = /^(['"])([\s\S]*)\1$/.exec(dv);
+                    if (q) dv = q[2].split(q[1] + q[1]).join(q[1]);
+                    else if (/^NULL$/i.test(dv)) continue;
                     field.default = dv;
                 } else if (/^fk->/i.test(tokens[i])) {
                     let fkSpec = tokens[i];

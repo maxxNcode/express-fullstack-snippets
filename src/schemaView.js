@@ -374,15 +374,15 @@ class SchemaViewProvider {
 
     async _handlePreviewSql(tableName) {
         const gen = this.generator || new CodeGenerator(this.schemaRegistry);
-        const sql = gen.generateCreateTableSql(tableName);
-        if (!sql) {
+        // Paste-ready for server.js: db.exec(`CREATE TABLE ...`) plus the ready log.
+        if (!gen.generateCreateTableSql(tableName)) {
             vscode.window.showErrorMessage('njs: Table not found');
             return;
         }
 
         const doc = await vscode.workspace.openTextDocument({
-            content: sql,
-            language: 'sql'
+            content: gen.generateCreateTable(tableName),
+            language: 'javascript'
         });
         await vscode.window.showTextDocument(doc, { preview: true });
     }

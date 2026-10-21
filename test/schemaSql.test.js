@@ -103,6 +103,19 @@ async function main() {
     }
     const ctCode = gen.generateCreateTable(names[0]);
     assert.ok(ctCode.startsWith('db.exec(`\n') && !ctCode.includes('\\n'), 'Create-table code keeps real line breaks');
+    // Inline njs:register specs must preview as executable SQL.
+    const inl = registry.parseInlineSpec("Voters: votersID PRIMARY, note TEXT DEFAULT 'it''s, ok', n TEXT DEFAULT NULL, voted INTEGER DEFAULT 0, cat INTEGER FK->Categories(CategoryID);");
+    assert.strictEqual(inl.fields[1].default, "it's, ok");
+    assert.strictEqual(inl.fields[4].fk?.table, 'Categories');
+    await registry.addTable(inl.tableName, inl.fields);
+    const inlSql = gen.generateCreateTableSql('Voters');
+    const idb = new SQL.Database();
+    idb.run(inlSql);
+    idb.run('INSERT INTO Voters (votersID) VALUES (1)');
+    assert.deepStrictEqual(idb.exec('SELECT note, n, voted FROM Voters')[0].values[0], ["it's, ok", null, 0], inlSql);
+    idb.close();
+    await registry.removeTable('Voters');
+    assert.throws(() => registry.parseInlineSpec('Order: id INTEGER'), /SQL keyword/);
     assert.throws(() => registry.parseCreateTable('CREATE TABLE "Order" (id INTEGER)'), /SQL keyword/);
     assert.throws(() => registry.parseCreateTable('CREATE TABLE T (id INTEGER, "group" TEXT)'), /SQL keyword/);
     assert.ok(registry.parseCreateTable('CREATE TABLE T (key TEXT, action TEXT, date TEXT)').fields.length === 3, 'Non-reserved keywords stay allowed');
@@ -120,10 +133,10 @@ async function main() {
     view.schemaRegistry = registry;
     view.generator = gen;
     await view._handlePreviewSql('Categories');
-    assert.strictEqual(preview.language, 'sql');
-    assert.strictEqual(preview.content, gen.generateCreateTableSql('Categories'));
+    assert.strictEqual(preview.language, 'javascript');
+    assert.strictEqual(preview.content, gen.generateCreateTable('Categories'), 'Preview is paste-ready db.exec code');
     view._handleExtractSchemaSql();
     assert.strictEqual((clip.match(/CREATE TABLE IF NOT EXISTS/g) || []).length, 4, 'Copy schema SQL includes every table');
-    console.log('schemaSql: multi-table registration, cursor ranges, typeless columns and executable raw preview PASSED');
+    console.log('schemaSql: multi-table registration, cursor ranges, typeless columns and paste-ready db.exec preview PASSED');
 }
 main().catch(err => { console.error(err); process.exitCode = 1; });
