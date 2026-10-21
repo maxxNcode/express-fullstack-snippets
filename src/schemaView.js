@@ -374,8 +374,8 @@ class SchemaViewProvider {
 
     async _handlePreviewSql(tableName) {
         const gen = this.generator || new CodeGenerator(this.schemaRegistry);
-        const sql = gen.generateCreateTable(tableName);
-        if (!sql || sql === '// Table not found') {
+        const sql = gen.generateCreateTableSql(tableName);
+        if (!sql) {
             vscode.window.showErrorMessage('njs: Table not found');
             return;
         }
@@ -395,15 +395,7 @@ class SchemaViewProvider {
         }
 
         const gen = this.generator || new CodeGenerator(this.schemaRegistry);
-        const sqlParts = [];
-        for (const tableName of tables) {
-            const jsCode = gen.generateCreateTable(tableName);
-            if (!jsCode || jsCode === '// Table not found') continue;
-            const match = jsCode.match(/db\.exec\(`([\s\S]*?)`\)/);
-            if (match) {
-                sqlParts.push(match[1].trim().replace(/;$/, '') + ';');
-            }
-        }
+        const sqlParts = tables.map(t => gen.generateCreateTableSql(t)).filter(Boolean);
 
         if (!sqlParts.length) {
             vscode.window.showErrorMessage('njs: Failed to extract schema');

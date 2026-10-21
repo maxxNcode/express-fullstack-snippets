@@ -2,7 +2,7 @@
   "name": "nodejs-express-workbench",
   "displayName": "NODEJS EXPRESS WORKBENCH",
   "description": "The ultimate VS Code extension for Express + SQLite full-stack development. Includes 45+ schema-aware njs-snippets for CRUD, Auth, Security, Frontend.",
-  "version": "3.9.3",
+  "version": "4.0.5",
   "publisher": "weonlyliveonce",
   "license": "MIT",
   "icon": "icon.png",
@@ -185,7 +185,7 @@
     "sql.js": "^1.14.1"
   },
   "scripts": {
-    "test": "node test/dependencyChecker.test.js && node test/scaffolder.test.js && node test/generatedOutput.test.js && node test/serverManager.test.js && node -r ./test/shim.js test/generator.test.js && node test/queryGenerator.test.js && node -r ./test/shim.js test/screenGenerator.test.js",
+    "test": "node test/dependencyChecker.test.js && node test/scaffolder.test.js && node test/generatedOutput.test.js && node test/schemaSql.test.js && node test/serverManager.test.js && node -r ./test/shim.js test/generator.test.js && node test/queryGenerator.test.js && node -r ./test/shim.js test/screenGenerator.test.js",
     "test:integration": "node test/generatedApp.integration.js"
   }
 }

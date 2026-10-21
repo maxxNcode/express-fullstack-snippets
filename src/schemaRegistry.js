@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-const { splitSql } = require('./sqlText');
+const { splitSql, stripSqlComments, createTableStatements } = require('./sqlText');
 
 const SCHEMA_FILE = '.njs-schema.json';
+// SQLite keywords that fail as unquoted table/column names (measured against sql.js CRUD statements).
+const SQL_KEYWORDS = new Set('ADD ALL ALTER AND AS AUTOINCREMENT BETWEEN CASE CAST CHECK COLLATE COMMIT CONSTRAINT CREATE DEFAULT DEFERRABLE DELETE DISTINCT DROP ELSE ESCAPE EXCEPT EXISTS FOREIGN FROM GROUP HAVING IF IN INDEX INSERT INTERSECT INTO IS ISNULL JOIN LIMIT NOT NOTHING NOTNULL NULL ON OR ORDER PRIMARY RAISE REFERENCES RETURNING SELECT SET TABLE THEN TO TRANSACTION UNION UNIQUE UPDATE USING VALUES WHEN WHERE'.split(' '));
 
 class SchemaRegistry {
     constructor() {
@@ -219,6 +221,9 @@ class SchemaRegistry {
         if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name)) {
             throw new Error(`Invalid field name "${name}" in ${context}: must be a valid identifier`);
         }
+        if (SQL_KEYWORDS.has(name.toUpperCase())) {
+            throw new Error(`Invalid field name "${name}" in ${context}: "${name}" is an SQL keyword, rename it (e.g. "${name}Name")`);
+        }
     }
 
     // --- Query management ---
@@ -398,7 +403,12 @@ class SchemaRegistry {
             sql = sql.slice(1, -1).trim();
         }
 
-        const tableMatch = sql.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:`?)(\w+)(?:`?)\s*\(([\s\S]*)\)\s*;?\s*$/i);
+        const statements = splitSql(stripSqlComments(sql)).filter(s => s.trim());
+        if (statements.length !== 1) throw new Error('Expected one CREATE TABLE statement. Use table registration to import multiple tables.');
+        sql = statements[0].trim();
+
+        // Accepts TEMP, quoted/schema-qualified names and trailing options (WITHOUT ROWID, STRICT, ENGINE=...).
+        const tableMatch = sql.match(/^CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`"[]?\w+[`"\]]?\s*\.\s*)?[`"[]?(\w+)[`"\]]?\s*\(([\s\S]*)\)[^()]*$/i);
         if (!tableMatch) {
             throw new Error('Invalid CREATE TABLE syntax. Expected: CREATE TABLE [IF NOT EXISTS] TableName (columns...)');
         }
@@ -406,6 +416,10 @@ class SchemaRegistry {
         const tableName = tableMatch[1];
         if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(tableName)) {
             throw new Error(`Invalid table name "${tableName}": must be a valid identifier`);
+        }
+        // Generated apps use names unquoted, so keywords like Order/Group would break every query.
+        if (SQL_KEYWORDS.has(tableName.toUpperCase())) {
+            throw new Error(`Invalid table name "${tableName}": it is an SQL keyword, rename it (e.g. "${tableName}s")`);
         }
 
         const columnsSection = tableMatch[2];
@@ -418,7 +432,7 @@ class SchemaRegistry {
             if (!trimmed) continue;
 
             // Parse table-level constraints
-            if (/^(PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE(?:\s+(?:KEY|INDEX))?(?:\s+\w+)?\s*\(|CHECK\s*\(|CONSTRAINT)\b/i.test(trimmed)) {
+            if (/^(?:PRIMARY\s+KEY\b|FOREIGN\s+KEY\b|CONSTRAINT\b|CHECK\s*\(|UNIQUE(?:\s+(?:KEY|INDEX))?(?:\s+\w+)?\s*\()/i.test(trimmed)) {
                 const c = this._parseTableConstraint(trimmed);
                 if (c) constraints.push(c);
                 continue;
@@ -427,16 +441,18 @@ class SchemaRegistry {
             if (/^INDEX\b/i.test(trimmed)) continue;
 
             const tokens = this._tokenizeColumnDef(trimmed);
-            if (tokens.length < 2) continue;
+            if (!tokens.length) continue;
 
-            const rawName = tokens[0];
+            const rawName = tokens[0].replace(/^[`"[]|[`"\]]$/g, '');
             this._validateFieldName(rawName, `"${tableName}"`);
-            const field = { name: rawName, type: 'TEXT', rawType: tokens[1] };
-
-            field.type = this._parseSqlType(tokens[1]);
+            // Type is every token before the first constraint keyword (typeless, multi-word and "VARCHAR (255)" types).
+            let i = 1;
+            while (i < tokens.length && !/^(PRIMARY|NOT|NULL|DEFAULT|UNIQUE|REFERENCES|CHECK|CONSTRAINT|COLLATE|GENERATED|AS|AUTOINCREMENT|AUTO_INCREMENT)(\(|$)/i.test(tokens[i])) i++;
+            const rawType = tokens.slice(1, i).join(' ');
+            const field = { name: rawName, type: rawType ? this._parseSqlType(rawType.split(/[\s(]/)[0]) : '', rawType };
 
             // Parse column constraints
-            for (let i = 2; i < tokens.length; i++) {
+            for (; i < tokens.length; i++) {
                 const t = tokens[i].toUpperCase();
                 if (t === 'PRIMARY' && tokens[i + 1]?.toUpperCase() === 'KEY') {
                     field.pk = true;
@@ -449,19 +465,20 @@ class SchemaRegistry {
                 } else if (t === 'DEFAULT') {
                     let dv = tokens[++i];
                     if (dv === undefined) break;
+                    if (/^[+-]$/.test(dv) && tokens[i + 1] !== undefined) dv += tokens[++i];
                     if ((dv.startsWith("'") && dv.endsWith("'")) || (dv.startsWith('"') && dv.endsWith('"'))) {
-                        dv = dv.slice(1, -1);
-                    }
+                        dv = dv.slice(1, -1).replace(/''/g, "'");
+                    } else if (dv.toUpperCase() === 'NULL') continue;
                     field.default = dv;
                 } else if (t === 'REFERENCES') {
-                    const refMatch = trimmed.match(/REFERENCES\s+(\w+)\s*\((\w+)\)/i);
+                    const refMatch = trimmed.match(/REFERENCES\s+[`"[]?(\w+)[`"\]]?\s*\(\s*[`"[]?(\w+)[`"\]]?/i);
                     if (refMatch) {
                         field.fk = { table: refMatch[1], field: refMatch[2] };
                     }
                 } else if (t === 'UNIQUE') {
                     field.unique = true;
-                } else if (/^CHECK\s*\(/i.test(tokens[i])) {
-                    const checkMatch = tokens[i].match(/^CHECK\s*\(\s*([\s\S]*?)\s*\)\s*$/i);
+                } else if (/^CHECK\s*\(/i.test(tokens[i]) || (t === 'CHECK' && tokens[i + 1]?.startsWith('('))) {
+                    const checkMatch = (t === 'CHECK' ? 'CHECK' + tokens[++i] : tokens[i]).match(/^CHECK\s*\(\s*([\s\S]*?)\s*\)\s*$/i);
                     if (checkMatch) {
                         field.check = checkMatch[1];
                     }
@@ -476,6 +493,26 @@ class SchemaRegistry {
         }
 
         return { tableName, fields, constraints: constraints.length > 0 ? constraints : undefined };
+    }
+
+    parseCreateTables(sql) {
+        const statements = createTableStatements(sql);
+        if (!statements.length) throw new Error('No CREATE TABLE statements found');
+        return statements.map(statement => this.parseCreateTable(statement.sql));
+    }
+
+    async registerTablesFromSql(sql) {
+        const parsed = this.parseCreateTables(sql);
+        const original = this.schema.tables;
+        const tables = { ...original };
+        for (const { tableName, fields, constraints } of parsed) {
+            if (Object.prototype.hasOwnProperty.call(tables, tableName)) throw new Error(`Table "${tableName}" already exists`);
+            tables[tableName] = { fields, ...(constraints?.length ? { constraints } : {}) };
+        }
+        this.schema.tables = tables;
+        try { await this.save(); }
+        catch (err) { this.schema.tables = original; throw err; }
+        return parsed.map(t => t.tableName);
     }
 
     /**
@@ -515,7 +552,7 @@ class SchemaRegistry {
                 } else if (c === '\\' && i + 1 < colDef.length) current += colDef[++i];
                 continue;
             }
-            if (c === "'" || c === '"' || c === '`') { quote = c; current += c; continue; }
+            if (c === "'" || c === '"' || c === '`' || c === '[') { quote = c === '[' ? ']' : c; current += c; continue; }
             if (c === '(') depth++;
             else if (c === ')') depth--;
             else if (/\s/.test(c) && depth === 0) {
@@ -539,28 +576,30 @@ class SchemaRegistry {
         let rest = def.trim();
 
         // CONSTRAINT name ...
-        const cm = rest.match(/^CONSTRAINT\s+(\w+)\s+/i);
+        const cm = rest.match(/^CONSTRAINT\s+[`"[]?(\w+)[`"\]]?\s+/i);
         if (cm) {
             name = cm[1];
             rest = rest.substring(cm[0].length);
         }
+        // Column lists: drop identifier quotes and ASC/DESC. Trailing ON CONFLICT/ON DELETE clauses are ignored.
+        const cols = list => list.split(',').map(s => s.trim().replace(/\s+(?:ASC|DESC)$/i, '').replace(/[`"[\]]/g, ''));
 
         // PRIMARY KEY (col1, col2, ...)
-        let m = rest.match(/^PRIMARY\s+KEY\s*\(([^)]+)\)\s*$/i);
+        let m = rest.match(/^PRIMARY\s+KEY\s*\(([^)]+)\)/i);
         if (m) {
-            return { type: 'PRIMARY KEY', name, columns: m[1].split(',').map(s => s.trim().replace(/`/g, '')) };
+            return { type: 'PRIMARY KEY', name, columns: cols(m[1]) };
         }
 
         // UNIQUE [KEY|INDEX] [index_name] (col1, col2, ...)
-        m = rest.match(/^UNIQUE(?:\s+(?:KEY|INDEX))?(?:\s+\w+)?\s*\(([^)]+)\)\s*$/i);
+        m = rest.match(/^UNIQUE(?:\s+(?:KEY|INDEX))?(?:\s+\w+)?\s*\(([^)]+)\)/i);
         if (m) {
-            return { type: 'UNIQUE', name, columns: m[1].split(',').map(s => s.trim()) };
+            return { type: 'UNIQUE', name, columns: cols(m[1]) };
         }
 
         // FOREIGN KEY (col1, ...) REFERENCES Table(col1, ...)
-        m = rest.match(/^FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+(?:`?)(\w+)(?:`?)\s*\((?:`?)([^)`]+)(?:`?)\)\s*$/i);
+        m = rest.match(/^FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+[`"[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i);
         if (m) {
-            return { type: 'FOREIGN KEY', name, columns: m[1].split(',').map(s => s.trim().replace(/`/g, '')), refTable: m[2].replace(/`/g, ''), refColumns: m[3].split(',').map(s => s.trim().replace(/`/g, '')) };
+            return { type: 'FOREIGN KEY', name, columns: cols(m[1]), refTable: m[2], refColumns: cols(m[3]) };
         }
 
         // CHECK (expr) — find matching paren

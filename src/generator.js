@@ -1176,12 +1176,19 @@ class CodeGenerator {
     }
 
     generateCreateTable(tableName) {
+        const sql = this.generateCreateTableSql(tableName);
+        if (!sql) return '// Table not found';
+        // Template literal keeps the SQL multi-line; escape what a template would interpret.
+        return 'db.exec(`\n' + sql.replace(/[\\`]|\$\{/g, m => '\\' + m) + '\n`);\n' + 'console.log(' + JSON.stringify(`Table ${tableName} is ready.`) + ');';
+    }
+
+    generateCreateTableSql(tableName) {
         const table = this.schemaRegistry.getTable(tableName);
-        if (!table) return '// Table not found';
+        if (!table) return null;
         const fields = table.fields;
 
         const fieldLines = fields.map(f => {
-            let line = `    ${f.name} ${f.type}`;
+            let line = `    ${f.name}${f.type ? ' ' + f.type : ''}`;
             if (f.pk) {
                 line += ' PRIMARY KEY';
                 if (f.type === 'INTEGER' && f.autoIncrement) {
@@ -1194,10 +1201,10 @@ class CodeGenerator {
                 let defVal = String(f.default).replace(/;+$/, '').replace(/^['"]|['"]$/g, '');
                 if (['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME'].includes(defVal.toUpperCase())) {
                     line += ` DEFAULT ${defVal.toUpperCase()}`;
-                } else if (f.type !== 'INTEGER' && f.type !== 'REAL') {
-                    line += ` DEFAULT '${defVal.replace(/'/g, "''")}'`;
-                } else {
+                } else if (/^\(.*\)$/s.test(defVal) || ((f.type === 'INTEGER' || f.type === 'REAL') && /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(defVal))) {
                     line += ` DEFAULT ${defVal}`;
+                } else {
+                    line += ` DEFAULT '${defVal.replace(/'/g, "''")}'`;
                 }
             }
             if (f.check) {
@@ -1232,10 +1239,10 @@ class CodeGenerator {
         const sql = [
             `  CREATE TABLE IF NOT EXISTS ${tableName} (`,
             allLines.join(',\n'),
-            `  )`
+            `  );`
         ].join('\n');
 
-        return 'db.exec(' + JSON.stringify(sql) + ');\n' + 'console.log(' + JSON.stringify(`Table ${tableName} is ready.`) + ');';
+        return sql.trim();
     }
 
     // --- Query Builder delegation to QueryGenerator ---

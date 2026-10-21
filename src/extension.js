@@ -15,6 +15,7 @@ const { SchemaViewProvider } = require('./schemaView');
 const { MysqlToSqliteConverter } = require('./mysqlToSqlite');
 const { generateProjectFiles } = require('./projectGenerator');
 const dependencyChecker = require('./dependencyChecker');
+const { createTableStatements } = require('./sqlText');
 
 let serverManager;
 let aiClient;
@@ -82,12 +83,11 @@ function activate(context) {
                     // Check if this is a backtick-wrapped CREATE TABLE: njs:register(`CREATE TABLE...`)
                     if (spec.startsWith('`') && /CREATE\s+TABLE/i.test(spec)) {
                         try {
-                            const { tableName, fields, constraints } = schemaRegistry.parseCreateTable(spec);
-                            await schemaRegistry.addTable(tableName, fields, constraints);
-                            vscode.window.showInformationMessage(`njs: Table "${tableName}" registered from SQL`);
+                            const names = await schemaRegistry.registerTablesFromSql(spec.replace(/^`|`$/g, ''));
+                            vscode.window.showInformationMessage(`njs: Registered ${names.length} table(s): ${names.join(', ')}`);
                             const edit = new vscode.WorkspaceEdit();
                             const range = new vscode.Range(lineNum, 0, lineNum, lineText.length);
-                            edit.replace(event.document.uri, range, `// Table "${tableName}" registered from SQL`);
+                            edit.replace(event.document.uri, range, `// Registered from SQL: ${names.join(', ')}`);
                             await vscode.workspace.applyEdit(edit);
                         } catch (err) {
                             vscode.window.showErrorMessage(`njs: ${err.message}`);
@@ -340,22 +340,10 @@ function activate(context) {
             }
 
             if (!sqlText) {
-                // Search the ENTIRE document for a CREATE TABLE block (any cursor position)
-                for (let line = 0; line < editor.document.lineCount; line++) {
-                    const text = editor.document.lineAt(line).text;
-                    if (/^\s*CREATE\s+TABLE\b/i.test(text)) {
-                        const lines = [text];
-                        for (let l = line + 1; l < editor.document.lineCount; l++) {
-                            const nextLine = editor.document.lineAt(l).text;
-                            lines.push(nextLine);
-                            if (/\)\s*;?\s*$/.test(nextLine.trim())) {
-                                break;
-                            }
-                        }
-                        sqlText = lines.join('\n').trim();
-                        break;
-                    }
-                }
+                const statements = createTableStatements(editor.document.getText());
+                const offset = editor.document.offsetAt(editor.selection.active);
+                const statement = statements.find(s => offset <= s.end) || statements[statements.length - 1];
+                sqlText = statement?.sql || '';
             }
 
             if (!sqlText) {
@@ -370,9 +358,8 @@ function activate(context) {
             }
 
             try {
-                const { tableName, fields, constraints } = schemaRegistry.parseCreateTable(sqlText);
-                await schemaRegistry.addTable(tableName, fields, constraints);
-                vscode.window.showInformationMessage(`njs: Table "${tableName}" registered from SQL`);
+                const names = await schemaRegistry.registerTablesFromSql(sqlText);
+                vscode.window.showInformationMessage(`njs: Registered ${names.length} table(s): ${names.join(', ')}`);
             } catch (err) {
                 vscode.window.showErrorMessage(`njs: ${err.message}`);
             }
